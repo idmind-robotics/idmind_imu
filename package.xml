@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>idmind_imu</name>
+  <version>0.1.0</version>
+  <description>The idmind_imu package, which contains resources and nodes for the IMUs used in IDMind Robots</description>
+
+  <maintainer email="cneves@idmind.pt">Carlos Neves</maintainer>
+  <maintainer email="hpovoa@idmind.pt">Henrique Póvoa</maintainer>
+
+  <license>TODO</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <!-- ROS Packages -->
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <!-- IDMind packages -->
+  <depend>idmind_serial2</depend>
+
+</package>
