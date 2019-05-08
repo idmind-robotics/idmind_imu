@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
 import rospy
+from std_msgs.msg import String
 from sensor_msgs.msg import Imu
-from idmind_raposa.msg import Log
+from idmind_robot.msg import Log
 from serial import SerialException
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
@@ -37,6 +38,7 @@ class IDMindIMU:
         self.imu_offset.w = -1
 
         self.imu_pub = rospy.Publisher("/imu", Imu, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("/imu_euler", String, queue_size=10)
 
         rospy.Service("/idmind_razor/calibration", Trigger, self.request_calibration)
 
@@ -189,6 +191,13 @@ class IDMindIMU:
             # Handle message header
             imuMsg.header.frame_id = "base_link_imu"
             imuMsg.header.stamp = rospy.Time.now()+rospy.Duration(0.5)
+
+            imuMsg_euler = transformations.euler_from_quaternion([imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w])
+            pub_msg = "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w) + "imuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2])
+            self.imu_euler_pub.publish(pub_msg)
+            # print "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w)
+            # print "imuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2])
+
             self.imu_reading = imuMsg
 
         except SerialException as serial_exc:
