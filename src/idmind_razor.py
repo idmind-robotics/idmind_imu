@@ -3,7 +3,7 @@
 import rospy
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
-from idmind_robot.msg import Log
+from idmind_messages.msg import Log
 from serial import SerialException
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
