@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
 import rospy
+import subprocess
+import serial.tools.list_ports
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
-from idmind_robot.msg import Log
+from idmind_messages.msg import Log
 from serial import SerialException
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
@@ -30,6 +32,7 @@ class IDMindIMU:
         self.val_exc = 0
 
         # Connect to IMU
+        self.ser = None
         self.connection()
 
         self.imu_reading = Imu()
@@ -58,11 +61,20 @@ class IDMindIMU:
             except Exception as serial_exc:
                 self.log(serial_exc, 2)
             if not connected:
-                for i in range(0,10):
+                for addr in [comport.device for comport in serial.tools.list_ports.comports()]:
+                    # If the lsof call returns an output, then the port is already in use!
                     try:
-                        self.ser = IDMindSerial("/dev/ttyACM"+str(i), baudrate=115200, timeout=0.5)
-                        connected = True
-                        break
+                        subprocess.check_output(['lsof', '+wt', addr])
+                        continue
+                    except subprocess.CalledProcessError:
+                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
+                        imu_data = self.ser.read_until("\r\n")
+                        if len(imu_data) == 0:
+                            self.log("IMU is not answering", 2)
+                            return
+                        else:
+                            connected = True
+                            break
                     except KeyboardInterrupt:
                         self.log("Node shutdown by user.", 2)
                         raise KeyboardInterrupt()
