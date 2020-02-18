@@ -79,7 +79,7 @@ class IDMindIMU:
                         self.log("Node shutdown by user.", 2)
                         raise KeyboardInterrupt()
                     except SerialException:
-                        self.log("Unable to connect to /dev/ttyACM"+str(i), 2)
+                        self.log("Unable to connect to "+addr, 2)
                     except Exception as serial_exc:
                         self.log(serial_exc, 2)
             if not connected:
