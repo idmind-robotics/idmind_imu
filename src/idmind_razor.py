@@ -249,7 +249,7 @@ class IDMindIMU:
         r = rospy.Rate(20)
         while not rospy.is_shutdown():
             try:
-                self.log("Bytes waiting: {}".format(self.ser.in_waiting), 5)
+                self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)
                 if self.calibration:
                     self.calibrate_imu()
                 else:
