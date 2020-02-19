@@ -12,8 +12,8 @@ from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
 from idmind_serial2.idmind_serialport import IDMindSerial
 
-VERBOSE = 3
-LOGS = 3
+VERBOSE = 5
+LOGS = 5
 
 
 class IDMindIMU:
@@ -31,14 +31,14 @@ class IDMindIMU:
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.val_exc = 0
 
+        self.imu_reading = Imu()
+        self.calibration = True
+        self.imu_offset = Quaternion()
+        self.imu_offset.w = -1
+
         # Connect to IMU
         self.ser = None
         self.connection()
-
-        self.imu_reading = Imu()
-        self.calibration = False
-        self.imu_offset = Quaternion()
-        self.imu_offset.w = -1
 
         self.imu_pub = rospy.Publisher("/imu", Imu, queue_size=10)
         self.imu_euler_pub = rospy.Publisher("/imu_euler", String, queue_size=10)
@@ -47,8 +47,8 @@ class IDMindIMU:
 
     def connection(self):
         """
-        Function that connects to IMU port. Tries /dev/idmind-imu (created by udev rules) and then tries all ttyACM ports
-        Repeats until found
+        Function that connects to IMU port. Tries /dev/idmind-imu (created by udev rules) and then tries all available ports
+        Repeats until found. Flags for calibration.
         :return:
         """
         connected = False
@@ -59,8 +59,9 @@ class IDMindIMU:
             except SerialException:
                 self.log("Unable to connect to /dev/idmind-imu.", 2)
             except Exception as serial_exc:
-                self.log(serial_exc, 2)
+                self.log("Exception caught: {}".format(serial_exc), 2)
             if not connected:
+                self.log("Searching on other ports", 5)
                 for addr in [comport.device for comport in serial.tools.list_ports.comports()]:
                     # If the lsof call returns an output, then the port is already in use!
                     try:
@@ -69,12 +70,12 @@ class IDMindIMU:
                     except subprocess.CalledProcessError:
                         self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
                         imu_data = self.ser.read_until("\r\n")
-                        if len(imu_data) == 0:
-                            self.log("IMU is not answering", 2)
-                            return
-                        else:
+                        if self.parse_msg(imu_data):
                             connected = True
+                            self.log("Imu found on {}".format(addr), 5)
                             break
+                        else:
+                            self.log("Imu not found on {}".format(addr), 7)
                     except KeyboardInterrupt:
                         self.log("Node shutdown by user.", 2)
                         raise KeyboardInterrupt()
@@ -82,9 +83,14 @@ class IDMindIMU:
                         self.log("Unable to connect to "+addr, 2)
                     except Exception as serial_exc:
                         self.log(serial_exc, 2)
+                else:
+                    self.log("No other devices found.", 5)
+
             if not connected:
                 self.log("IMU not found. Waiting 5 secs to try again.", 1)
                 rospy.sleep(5)
+            else:
+                self.calibration = True
 
         return connected
 
@@ -105,6 +111,33 @@ class IDMindIMU:
     def request_calibration(self, _req):
         self.calibration = True
         return TriggerResponse(True, "Requesting calibration")
+
+    def parse_msg(self, imu_data):
+        new_q = []
+        a = []
+        w = []
+        dev_data = imu_data.split(" | ")
+        for d in dev_data:
+            values = d.split(" ")
+            if values[0] == "Q:":
+                q1 = Quaternion()
+                q1.x = float(values[2])
+                q1.y = float(values[3])
+                q1.z = float(values[4])
+                q1.w = float(values[1])
+                q_off = self.imu_offset
+
+                new_q = transformations.quaternion_multiply([q1.x, q1.y, q1.z, q1.w],
+                                                            [q_off.x, q_off.y, q_off.z, q_off.w])
+            elif values[0] == "A:":
+                a = [float(values[1]), float(values[2]), float(values[3])]
+            elif values[0] == "G:":
+                w = [float(values[1]), float(values[2]), float(values[3])]
+            else:
+                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
+                self.log(values[0], 5)
+                return False
+        return [new_q, a, w]
 
     def calibrate_imu(self):
         """
@@ -171,35 +204,21 @@ class IDMindIMU:
             if len(imu_data) == 0:
                 self.log("IMU is not answering", 2)
                 return
-            dev_data = imu_data.split(" | ")
-            for d in dev_data:
-                values = d.split(" ")
-                if values[0] == "Q:":
-                    q1 = Quaternion()
-                    q1.x = float(values[2])
-                    q1.y = float(values[3])
-                    q1.z = float(values[4])
-                    q1.w = float(values[1])
-                    q_off = self.imu_offset
-
-                    new_q = transformations.quaternion_multiply([q1.x, q1.y, q1.z, q1.w],
-                                                                [q_off.x, q_off.y, q_off.z, q_off.w])
-                    imuMsg.orientation.x = new_q[0]
-                    imuMsg.orientation.y = new_q[1]
-                    imuMsg.orientation.z = new_q[2]
-                    imuMsg.orientation.w = new_q[3]
-                elif values[0] == "A:":
-                    imuMsg.linear_acceleration.x = float(values[1])
-                    imuMsg.linear_acceleration.y = float(values[2])
-                    imuMsg.linear_acceleration.z = float(values[3])
-                elif values[0] == "G:":
-                    imuMsg.angular_velocity.x = float(values[1])
-                    imuMsg.angular_velocity.y = float(values[2])
-                    imuMsg.angular_velocity.z = float(values[3])
-                else:
-                    self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
-                    self.log(values[0], 5)
-                    return
+            try:
+                [q, a, w] = self.parse_msg(imu_data)
+                imuMsg.orientation.x = q[0]
+                imuMsg.orientation.y = q[1]
+                imuMsg.orientation.z = q[2]
+                imuMsg.orientation.w = q[3]
+                imuMsg.linear_acceleration.x = a[0]
+                imuMsg.linear_acceleration.y = a[1]
+                imuMsg.linear_acceleration.z = a[2]
+                imuMsg.angular_velocity.x = w[0]
+                imuMsg.angular_velocity.y = w[1]
+                imuMsg.angular_velocity.z = w[2]
+            except:
+                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
+                return
             # Handle message header
             imuMsg.header.frame_id = "base_link_imu"
             imuMsg.header.stamp = rospy.Time.now()+rospy.Duration(0.5)
@@ -221,7 +240,6 @@ class IDMindIMU:
         except Exception as imu_exc:
             self.log(imu_exc, 3)
             raise imu_exc
-
 
     def publish_imu(self):
         self.imu_pub.publish(self.imu_reading)
