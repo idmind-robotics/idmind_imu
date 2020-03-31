@@ -1,16 +1,19 @@
 #!/usr/bin/env python
 
-import rospy
 import subprocess
 import serial.tools.list_ports
+from serial import SerialException
+from math import degrees
+
+import rospy
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
-from idmind_messages.msg import Log
-from serial import SerialException
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
+
 from idmind_serial2.idmind_serialport import IDMindSerial
+from idmind_messages.msg import Log
 
 VERBOSE = 5
 LOGS = 5
@@ -224,7 +227,9 @@ class IDMindIMU:
             imuMsg.header.stamp = rospy.Time.now()+rospy.Duration(0.5)
 
             imuMsg_euler = transformations.euler_from_quaternion([imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w])
-            pub_msg = "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w) + "imuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2])
+            pub_msg = "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w) + \
+                      "\nimuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2]) +\
+                      "\nimuMsg_euler deg = (%s, %s, %s)" % (degrees(imuMsg_euler[0]), degrees(imuMsg_euler[1]), degrees(imuMsg_euler[2]))
             self.imu_euler_pub.publish(pub_msg)
             # print "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w)
             # print "imuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2])
