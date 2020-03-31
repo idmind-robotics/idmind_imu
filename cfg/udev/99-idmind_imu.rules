@@ -1,2 +1,2 @@
-# Rules for IMU
+# Rule for IMU
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="1b4f", ATTRS{idProduct}=="9d0f", SYMLINK+="idmind-imu", GROUP=="dialout"
