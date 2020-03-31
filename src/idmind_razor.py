@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import sys
 import subprocess
 import serial.tools.list_ports
 from serial import SerialException
@@ -44,7 +45,7 @@ class IDMindIMU:
         self.connection()
 
         self.imu_pub = rospy.Publisher("/imu", Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("/imu_euler", String, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("/imu/euler_string", String, queue_size=10)
 
         rospy.Service("/idmind_razor/calibration", Trigger, self.request_calibration)
 
@@ -185,19 +186,19 @@ class IDMindIMU:
         """
         # Create new message
         try:
-            imuMsg = Imu()
+            imu_msg = Imu()
             # Set the sensor covariances
-            imuMsg.orientation_covariance = [
+            imu_msg.orientation_covariance = [
                 0.0025, 0, 0,
                 0, 0.0025, 0,
                 0, 0, 0.0025
             ]
-            imuMsg.angular_velocity_covariance = [
+            imu_msg.angular_velocity_covariance = [
                 0.02, 0, 0,
                 0, 0.02, 0,
                 0, 0, 0.02
             ]
-            imuMsg.linear_acceleration_covariance = [
+            imu_msg.linear_acceleration_covariance = [
                 0.04, 0, 0,
                 0, 0.04, 0,
                 0, 0, 0.04
@@ -209,32 +210,26 @@ class IDMindIMU:
                 return
             try:
                 [q, a, w] = self.parse_msg(imu_data)
-                imuMsg.orientation.x = q[0]
-                imuMsg.orientation.y = q[1]
-                imuMsg.orientation.z = q[2]
-                imuMsg.orientation.w = q[3]
-                imuMsg.linear_acceleration.x = a[0]
-                imuMsg.linear_acceleration.y = a[1]
-                imuMsg.linear_acceleration.z = a[2]
-                imuMsg.angular_velocity.x = w[0]
-                imuMsg.angular_velocity.y = w[1]
-                imuMsg.angular_velocity.z = w[2]
+                imu_msg.orientation.x = q[0]
+                imu_msg.orientation.y = q[1]
+                imu_msg.orientation.z = q[2]
+                imu_msg.orientation.w = q[3]
+                imu_msg.linear_acceleration.x = a[0]
+                imu_msg.linear_acceleration.y = a[1]
+                imu_msg.linear_acceleration.z = a[2]
+                imu_msg.angular_velocity.x = w[0]
+                imu_msg.angular_velocity.y = w[1]
+                imu_msg.angular_velocity.z = w[2]
             except:
                 self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
                 return
             # Handle message header
-            imuMsg.header.frame_id = "base_link_imu"
-            imuMsg.header.stamp = rospy.Time.now()+rospy.Duration(0.5)
+            imu_msg.header.frame_id = "base_link_imu"
+            imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
 
-            imuMsg_euler = transformations.euler_from_quaternion([imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w])
-            pub_msg = "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w) + \
-                      "\nimuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2]) +\
-                      "\nimuMsg_euler deg = (%s, %s, %s)" % (degrees(imuMsg_euler[0]), degrees(imuMsg_euler[1]), degrees(imuMsg_euler[2]))
-            self.imu_euler_pub.publish(pub_msg)
-            # print "imuMsg_quaternion = (%s, %s, %s, %s)" % (imuMsg.orientation.x, imuMsg.orientation.y, imuMsg.orientation.z, imuMsg.orientation.w)
-            # print "imuMsg_euler = (%s, %s, %s)" % (imuMsg_euler[0], imuMsg_euler[1], imuMsg_euler[2])
+            self.publish_euler_imu(imu_msg)
 
-            self.imu_reading = imuMsg
+            self.imu_reading = imu_msg
 
         except SerialException as serial_exc:
             self.log("SerialException while reading from IMU: {}".format(serial_exc), 3)
@@ -248,6 +243,22 @@ class IDMindIMU:
 
     def publish_imu(self):
         self.imu_pub.publish(self.imu_reading)
+
+    def publish_euler_imu(self, imu_reading):
+        euler = transformations.euler_from_quaternion([imu_reading.orientation.x, imu_reading.orientation.y,
+                                                           imu_reading.orientation.z, imu_reading.orientation.w])
+
+        imu_quaternion = "quaternion = ({}, {}, {}, {})".format(imu_reading.orientation.x,
+                                                                    imu_reading.orientation.y,
+                                                                    imu_reading.orientation.z,
+                                                                    imu_reading.orientation.w)
+        imu_euler = "euler = ({}, {}, {})".format(euler[0], euler[1], euler[2])
+        imu_euler_deg = "euler_deg = ({}, {}, {})".format(degrees(euler[0]),
+                                                          degrees(euler[1]),
+                                                          degrees(euler[2]))
+
+        euler_imu_string = imu_quaternion + "\n" + imu_euler + "\n" + imu_euler_deg
+        self.imu_euler_pub.publish(euler_imu_string)
 
     def start(self):
 
@@ -272,6 +283,7 @@ class IDMindIMU:
 
 if __name__ == "__main__":
     rospy.init_node("idmind_razor")
+
     imu = IDMindIMU()
     imu.start()
     rospy.loginfo("{}: Node stopped".format(rospy.get_name()))
