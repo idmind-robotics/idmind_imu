@@ -40,6 +40,7 @@ class IDMindIMU:
         self.imu_offset = Quaternion()
         self.imu_offset.w = -1
 
+        self.frame_id = rospy.get_param("frame_id", default="base_link_imu")
         # Connect to IMU
         self.ser = None
         self.connection()
@@ -224,7 +225,7 @@ class IDMindIMU:
                 self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
                 return
             # Handle message header
-            imu_msg.header.frame_id = "base_link_imu"
+            imu_msg.header.frame_id = self.frame_id
             imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
 
             self.publish_euler_imu(imu_msg)

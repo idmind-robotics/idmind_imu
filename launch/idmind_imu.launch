@@ -3,6 +3,7 @@
     <arg name="imu" default="razor" />
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
         <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />
+        <param name="frame_id"  type="string"   value="base_link_imu" />
     </node>
 
 </launch>
