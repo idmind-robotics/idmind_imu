@@ -36,11 +36,12 @@ class IDMindIMU:
         self.val_exc = 0
 
         self.imu_reading = Imu()
-        self.calibration = True
         self.imu_offset = Quaternion()
         self.imu_offset.w = -1
 
-        self.frame_id = rospy.get_param("frame_id", default="base_link_imu")
+        self.calibration = rospy.get_param("~calibration", default=True)
+        self.is_relative = rospy.get_param("~relative", default=True)
+        self.frame_id = rospy.get_param("~frame_id", default="base_link_imu")
         # Connect to IMU
         self.ser = None
         self.connection()
@@ -95,7 +96,7 @@ class IDMindIMU:
                 self.log("IMU not found. Waiting 5 secs to try again.", 1)
                 rospy.sleep(5)
             else:
-                self.calibration = True
+                self.calibration = rospy.get_param("~calibration", default=True)
 
         return connected
 
@@ -130,16 +131,18 @@ class IDMindIMU:
                 q1.y = float(values[3])
                 q1.z = float(values[4])
                 q1.w = float(values[1])
-                q_off = self.imu_offset
-
-                new_q = transformations.quaternion_multiply([q1.x, q1.y, q1.z, q1.w],
-                                                            [q_off.x, q_off.y, q_off.z, q_off.w])
+                if self.is_relative:
+                    q_off = self.imu_offset
+                    new_q = transformations.quaternion_multiply([q1.x, q1.y, q1.z, q1.w],
+                                                                [q_off.x, q_off.y, q_off.z, q_off.w])
+                else:
+                    new_q = [q1.x, q1.y, q1.z, q1.w]
             elif values[0] == "A:":
                 a = [float(values[1]), float(values[2]), float(values[3])]
             elif values[0] == "G:":
                 w = [float(values[1]), float(values[2]), float(values[3])]
             else:
-                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
+                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
                 self.log(values[0], 5)
                 return False
         return [new_q, a, w]
@@ -169,7 +172,7 @@ class IDMindIMU:
                         calibrated = True
                         self.calibration = False
                     else:
-                        rospy.logwarn("{}: IMU is giving bad answers - {}".format(rospy.get_name(), s_data[0]))
+                        rospy.logwarn("IMU is giving bad answers - {}".format(s_data[0]))
                 else:
                     if reads == 1:
                         self.log("Discarding 100 readings for calibration", 3)
@@ -222,7 +225,8 @@ class IDMindIMU:
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
             except:
-                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
+
+                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
                 return
             # Handle message header
             imu_msg.header.frame_id = self.frame_id
@@ -249,16 +253,14 @@ class IDMindIMU:
         euler = transformations.euler_from_quaternion([imu_reading.orientation.x, imu_reading.orientation.y,
                                                            imu_reading.orientation.z, imu_reading.orientation.w])
 
-        imu_quaternion = "quaternion = ({}, {}, {}, {})".format(imu_reading.orientation.x,
-                                                                    imu_reading.orientation.y,
-                                                                    imu_reading.orientation.z,
-                                                                    imu_reading.orientation.w)
-        imu_euler = "euler = ({}, {}, {})".format(euler[0], euler[1], euler[2])
-        imu_euler_deg = "euler_deg = ({}, {}, {})".format(degrees(euler[0]),
-                                                          degrees(euler[1]),
-                                                          degrees(euler[2]))
+        # imu_quaternion = "quaternion = ({}, {}, {}, {})".format(imu_reading.orientation.x,
+        #                                                             imu_reading.orientation.y,
+        #                                                             imu_reading.orientation.z,
+        #                                                             imu_reading.orientation.w)
+        # imu_euler = "euler = ({}, {}, {})".format(euler[0], euler[1], euler[2])
+        imu_euler_deg = "euler_deg = {}, {}, {}".format(degrees(euler[0]), degrees(euler[1]), degrees(euler[2]))
 
-        euler_imu_string = imu_quaternion + "\n" + imu_euler + "\n" + imu_euler_deg
+        euler_imu_string = imu_euler_deg
         self.imu_euler_pub.publish(euler_imu_string)
 
     def start(self):
@@ -268,6 +270,7 @@ class IDMindIMU:
             try:
                 self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)
                 if self.calibration:
+                    self.log("Calibrating IMU...", 3)
                     self.calibrate_imu()
                 else:
                     self.update_imu()
