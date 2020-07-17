@@ -1,14 +1,30 @@
 <launch>
     <!--<node pkg="idmind_razor" type="idmind_imu.py" name="idmind_imu" output="screen" >-->
+    <arg name="yaml" default="idmind_imu.yaml" />
     <arg name="imu" default="razor" />
-    <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
-        <remap from="imu" to="idmind_imu" />
-        <remap from="imu/euler_string" to="idmind_imu/euler_string" />
+    <arg name="imu_topic" default="imu" />
+    <arg name="imu_euler_topic" default="imu/euler_string" />
 
-        <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />
-        <param name="frame_id"      type="string"   value="base_link_imu" />
-        <param name="calibration"      type="bool"     value="true" />
-        <param name="relative"      type="bool"     value="true" />
+    <arg name="frame_id" default="imu" />
+    <arg name="calibration" default="true" />
+    <arg name="relative" default="true" />
+
+    <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
+        <rosparam file="$(find idmind_imu)/cfg/$(arg yaml)" command="load" />
+
+        <remap from="imu" to="$(arg imu_topic)" />
+        <remap from="imu/euler_string"  to="$(arg imu_euler_topic)" />
+        <param name="frame_id"          type="string"   value="$(arg frame_id)" />
+        <param name="calibration"       type="bool"     value="$(arg calibration)" />
+        <param name="relative"          type="bool"     value="$(arg relative)" />
     </node>
+
+
+<!--    -->
+<!--    <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >-->
+<!--        <rosparam file="$(find idmind_imu)/cfg/$(arg yaml)" command="load" />-->
+<!--        <remap from="imu" to="idmind_imu" />-->
+<!--        <param name="frame_id"  type="string"   value="base_link_imu" />-->
+<!--    </node>-->
 
 </launch>
