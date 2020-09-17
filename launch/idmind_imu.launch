@@ -9,7 +9,7 @@
     <arg name="calibration" default="true" />
     <arg name="relative" default="true" />
 
-    <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
+    <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu_$(arg frame_id)" output="screen" >
         <rosparam file="$(find idmind_imu)/cfg/$(arg yaml)" command="load" />
 
         <remap from="imu" to="$(arg imu_topic)" />
