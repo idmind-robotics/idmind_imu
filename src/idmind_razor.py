@@ -42,6 +42,7 @@ class IDMindIMU:
         self.calibration = rospy.get_param("~calibration", default=True)
         self.is_relative = rospy.get_param("~relative", default=True)
         self.frame_id = rospy.get_param("~frame_id", default="base_link_imu")
+        self.loop_rate = rospy.get_param("~publish_rate", default=20)
         # Connect to IMU
         self.ser = None
         self.connection()
@@ -123,6 +124,11 @@ class IDMindIMU:
         a = []
         w = []
         dev_data = imu_data.split(" | ")
+
+        if len(dev_data) != 3:
+            self.log("IMU is giving bad answers - {}".format(imu_data), 6)
+            return False
+            
         for d in dev_data:
             values = d.split(" ")
             if values[0] == "Q:":
@@ -142,7 +148,7 @@ class IDMindIMU:
             elif values[0] == "G:":
                 w = [float(values[1]), float(values[2]), float(values[3])]
             else:
-                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
+                self.log("IMU is giving bad answers - {}".format(imu_data), 6)
                 self.log(values[0], 5)
                 return False
         return [new_q, a, w]
@@ -210,7 +216,7 @@ class IDMindIMU:
 
             imu_data = self.ser.read_until("\r\n")
             if len(imu_data) == 0:
-                self.log("IMU is not answering", 2)
+                self.log("IMU is not answering", 2, alert="error")
                 return
             try:
                 [q, a, w] = self.parse_msg(imu_data)
@@ -225,8 +231,7 @@ class IDMindIMU:
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
             except:
-
-                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
+                self.log("IMU is giving bad answers - {}".format(imu_data), 6)
                 return
             # Handle message header
             imu_msg.header.frame_id = self.frame_id
@@ -265,7 +270,7 @@ class IDMindIMU:
 
     def start(self):
 
-        r = rospy.Rate(20)
+        r = rospy.Rate(self.loop_rate)
         while not rospy.is_shutdown():
             try:
                 self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)
