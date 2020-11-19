@@ -32,7 +32,7 @@ class IDMindIMU:
     def __init__(self):
 
         # Logging
-        self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
+        self.log_pub = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.val_exc = 0
 
         self.imu_reading = Imu()
@@ -42,7 +42,10 @@ class IDMindIMU:
         self.calibration = rospy.get_param("~calibration", default=True)
         self.is_relative = rospy.get_param("~relative", default=True)
         self.frame_id = rospy.get_param("~frame_id", default="base_link_imu")
+
         self.imu_port_name = rospy.get_param("~port_name", default="/dev/idmind-imu")
+        self.loop_rate = rospy.get_param("~publish_rate", default=20)
+
         # Connect to IMU
         self.ser = None
         self.connection(self.imu_port_name)
@@ -101,7 +104,7 @@ class IDMindIMU:
 
         return connected
 
-    def log(self, msg, msg_level, log_level=-1):
+    def log(self, msg, msg_level, log_level=-1, alert="info"):
         """
         Logging method for both verbose and logging topic
         :param msg: Message to be logged/displayed
@@ -109,11 +112,15 @@ class IDMindIMU:
         :param log_level: (optional) if this value is lower than LOGS, publish message
         :return:
         """
-
         if VERBOSE >= msg_level:
-            rospy.loginfo("{}: {}".format(rospy.get_name(), msg))
+            if alert == "info":
+                rospy.loginfo("{}: {}".format(rospy.get_name(), msg))
+            elif alert == "warn":
+                rospy.logwarn("{}: {}".format(rospy.get_name(), msg))
+            elif alert == "error":
+                rospy.logerr("{}: {}".format(rospy.get_name(), msg))
         if LOGS >= (log_level if log_level != -1 else msg_level):
-            self.logging.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
+            self.log_pub.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
 
     def request_calibration(self, _req):
         self.calibration = True
@@ -124,6 +131,11 @@ class IDMindIMU:
         a = []
         w = []
         dev_data = imu_data.split(" | ")
+
+        if len(dev_data) != 3:
+            self.log("IMU is giving bad answers - {}".format(imu_data), 6)
+            return False
+            
         for d in dev_data:
             values = d.split(" ")
             if values[0] == "Q:":
@@ -143,7 +155,7 @@ class IDMindIMU:
             elif values[0] == "G:":
                 w = [float(values[1]), float(values[2]), float(values[3])]
             else:
-                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
+                self.log("IMU is giving bad answers - {}".format(imu_data), 6)
                 self.log(values[0], 5)
                 return False
         return [new_q, a, w]
@@ -211,7 +223,7 @@ class IDMindIMU:
 
             imu_data = self.ser.read_until("\r\n")
             if len(imu_data) == 0:
-                self.log("IMU is not answering", 2)
+                self.log("IMU is not answering", 2, alert="error")
                 return
             try:
                 [q, a, w] = self.parse_msg(imu_data)
@@ -226,12 +238,12 @@ class IDMindIMU:
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
             except:
-
-                self.log("IMU is giving bad answers - {}".format(imu_data), 5)
+                self.log("IMU is giving bad answers - {}".format(imu_data), 6)
                 return
+
             # Handle message header
             imu_msg.header.frame_id = self.frame_id
-            imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
+            imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
             self.publish_euler_imu(imu_msg)
 
@@ -266,7 +278,7 @@ class IDMindIMU:
 
     def start(self):
 
-        r = rospy.Rate(20)
+        r = rospy.Rate(self.loop_rate)
         while not rospy.is_shutdown():
             try:
                 self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)

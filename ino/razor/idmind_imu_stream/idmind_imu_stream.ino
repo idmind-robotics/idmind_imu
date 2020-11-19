@@ -44,7 +44,7 @@ void setup()
                DMP_FEATURE_SEND_RAW_ACCEL | //Send Raw accelerations values
                DMP_FEATURE_SEND_CAL_GYRO | //Send calibrated gyro values
                DMP_FEATURE_GYRO_CAL, // Use gyro calibration
-               50); // Set DMP FIFO rate to 50 Hz
+               100); // Set DMP FIFO update rate to 50 Hz, between 4 and 200 Hz
    
    digitalWrite(STATUS_LED_PIN, HIGH);
 }
@@ -61,6 +61,7 @@ void loop()
       // quaternion values -- to estimate roll, pitch, and yaw
       //imu.computeEulerAngles();
       //printIMUData();
+      printAll();
     }
   }
   /*if (SerialPort.available() > 0) {    
@@ -84,8 +85,7 @@ void loop()
     }
   }*/
 
-  printAll();
-  delay(75);    
+  delay(20);    
 
 }
 
