@@ -1,19 +1,21 @@
 <launch>
     <!--<node pkg="idmind_razor" type="idmind_imu.py" name="idmind_imu" output="screen" >-->
-    <arg name="yaml" default="idmind_imu.yaml" />
-    <arg name="imu" default="razor" />
-    <arg name="imu_topic" default="imu" />
+    <arg name="yaml"            default="idmind_imu.yaml" />
+    <arg name="imu"             default="razor" />
+    <arg name="imu_topic"       default="imu" />
     <arg name="imu_euler_topic" default="imu/euler_string" />
 
-    <arg name="frame_id" default="imu" />
-    <arg name="calibration" default="true" />
-    <arg name="relative" default="true" />
+    <arg name="port_name"       default="/dev/idmind-imu" />
+    <arg name="frame_id"        default="imu" />
+    <arg name="calibration"     default="true" />
+    <arg name="relative"        default="true" />
 
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu_$(arg frame_id)" output="screen" >
         <rosparam file="$(find idmind_imu)/cfg/$(arg yaml)" command="load" />
 
         <remap from="imu" to="$(arg imu_topic)" />
         <remap from="imu/euler_string"  to="$(arg imu_euler_topic)" />
+        <param name="port_name"         type="string"   value="$(arg port_name)" />
         <param name="frame_id"          type="string"   value="$(arg frame_id)" />
         <param name="calibration"       type="bool"     value="$(arg calibration)" />
         <param name="relative"          type="bool"     value="$(arg relative)" />

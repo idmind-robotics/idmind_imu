@@ -42,28 +42,29 @@ class IDMindIMU:
         self.calibration = rospy.get_param("~calibration", default=True)
         self.is_relative = rospy.get_param("~relative", default=True)
         self.frame_id = rospy.get_param("~frame_id", default="base_link_imu")
+        self.imu_port_name = rospy.get_param("~port_name", default="/dev/idmind-imu")
         # Connect to IMU
         self.ser = None
-        self.connection()
+        self.connection(self.imu_port_name)
 
         self.imu_pub = rospy.Publisher("/imu", Imu, queue_size=10)
         self.imu_euler_pub = rospy.Publisher("/imu/euler_string", String, queue_size=10)
 
         rospy.Service("/idmind_razor/calibration", Trigger, self.request_calibration)
 
-    def connection(self):
+    def connection(self, port_name):
         """
-        Function that connects to IMU port. Tries /dev/idmind-imu (created by udev rules) and then tries all available ports
+        Function that connects to IMU port. Tries port_name and then tries all available ports
         Repeats until found. Flags for calibration.
         :return:
         """
         connected = False
         while not connected and not rospy.is_shutdown():
             try:
-                self.ser = IDMindSerial("/dev/idmind-imu", baudrate=115200, timeout=1)
+                self.ser = IDMindSerial(port_name, baudrate=115200, timeout=1, set_low_latency=True)
                 connected = True
             except SerialException:
-                self.log("Unable to connect to /dev/idmind-imu.", 2)
+                self.log("Unable to connect to %s" % port_name, 2)
             except Exception as serial_exc:
                 self.log("Exception caught: {}".format(serial_exc), 2)
             if not connected:
@@ -74,7 +75,7 @@ class IDMindIMU:
                         subprocess.check_output(['lsof', '+wt', addr])
                         continue
                     except subprocess.CalledProcessError:
-                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
+                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5, set_low_latency=True)
                         imu_data = self.ser.read_until("\r\n")
                         if self.parse_msg(imu_data):
                             connected = True
@@ -281,7 +282,7 @@ class IDMindIMU:
                 break
             except IOError as io_exc:
                 self.log("Lost connection to IMU", 3)
-                if not self.connection():
+                if not self.connection("/dev/idmind-imu"):
                     rospy.sleep(2)
 
 
