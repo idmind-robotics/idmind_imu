@@ -64,7 +64,7 @@ class IDMindIMU:
         connected = False
         while not connected and not rospy.is_shutdown():
             try:
-                self.ser = IDMindSerial(port_name, baudrate=115200, timeout=1, set_low_latency=True)
+                self.ser = IDMindSerial(port_name, baudrate=115200, timeout=1)
                 connected = True
             except SerialException:
                 self.log("Unable to connect to %s" % port_name, 2)
@@ -78,7 +78,7 @@ class IDMindIMU:
                         subprocess.check_output(['lsof', '+wt', addr])
                         continue
                     except subprocess.CalledProcessError:
-                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5, set_low_latency=True)
+                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
                         imu_data = self.ser.read_until("\r\n")
                         if self.parse_msg(imu_data):
                             connected = True
