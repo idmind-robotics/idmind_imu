@@ -1,4 +1,6 @@
 #include <avr/pgmspace.h>
+
+
 /*
  *  Crc calculation stuff
  */
@@ -156,3 +158,4 @@ long c;
 
 /* End of crctab.c */
 #endif
+

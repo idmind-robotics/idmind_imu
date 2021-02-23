@@ -83,8 +83,59 @@ void getData()
   }
 
   if (online.IMU)
-  {
-    //printDebug("getData: online.IMU = " + (String)online.IMU + "\r\n");
+  {    
+    printDebug("getData: online.IMU = " + (String)online.IMU + "\r\n");
+
+    // Read any DMP data waiting in the FIFO
+    // Note:
+    //    readDMPdataFromFIFO will return ICM_20948_Stat_FIFONoDataAvail if no data or incomplete data is available.
+    //    If data is available, readDMPdataFromFIFO will attempt to read _one_ frame of DMP data.
+    //    readDMPdataFromFIFO will return ICM_20948_Stat_Ok if a valid frame was read.
+    //    readDMPdataFromFIFO will return ICM_20948_Stat_FIFOMoreDataAvail if a valid frame was read _and_ the FIFO contains more (unread) data.
+    icm_20948_DMP_data_t data;
+    myICM.readDMPdataFromFIFO(&data);
+    while(myICM.status == ICM_20948_Stat_FIFONoDataAvail){
+      SerialPrintln("NO DATA IN FIFO");
+      myICM.readDMPdataFromFIFO(&data);
+    }
+        
+    if(( myICM.status == ICM_20948_Stat_Ok ) || ( myICM.status == ICM_20948_Stat_FIFOMoreDataAvail )) // Was valid data available?
+    {
+      //SERIAL_PORT.print(F("Received data! Header: 0x")); // Print the header in HEX so we can see what data is arriving in the FIFO
+      //if ( data.header < 0x1000) SERIAL_PORT.print( "0" ); // Pad the zeros
+      //if ( data.header < 0x100) SERIAL_PORT.print( "0" );
+      //if ( data.header < 0x10) SERIAL_PORT.print( "0" );
+      //SERIAL_PORT.println( data.header, HEX );
+      
+      if ( (data.header & DMP_header_bitmap_Quat9) > 0 ) // We have asked for orientation data so we should receive Quat9
+      {
+        // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
+        // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
+        // The quaternion data is scaled by 2^30.
+  
+        //SERIAL_PORT.printf("Quat9 data is: Q1:%ld Q2:%ld Q3:%ld Accuracy:%d\r\n", data.Quat9.Data.Q1, data.Quat9.Data.Q2, data.Quat9.Data.Q3, data.Quat9.Data.Accuracy);
+  
+        // Scale to +/- 1
+        float q1 = ((float)data.Quat9.Data.Q1) / 1073741824.0; // Convert to float. Divide by 2^30
+        float q2 = ((float)data.Quat9.Data.Q2) / 1073741824.0; // Convert to float. Divide by 2^30
+        float q3 = ((float)data.Quat9.Data.Q3) / 1073741824.0; // Convert to float. Divide by 2^30
+               
+        sprintf(tempData, "Q1:%.3f Q2:%.3f Q3:%.3f", q1, q2, q3);
+        //SerialPrintln(tempData);
+        strcat(outputData, tempData);
+      }
+      else{
+        SerialPrintln("We did not receive Quat9?");
+      }
+    }
+    else{
+      SerialPrintln("But now it is not working");
+    }
+  
+    if ( myICM.status != ICM_20948_Stat_FIFOMoreDataAvail ) // If more data is available then we should read it right away - and not delay
+    {
+      delay(10);
+    }
 
     if (myICM.dataReady())
     {
@@ -113,10 +164,11 @@ void getData()
         strcat(outputData, tempData);
       }
     }
-    //else
-    //{
-    //  printDebug("getData: myICM.dataReady = " + (String)myICM.dataReady() + "\r\n");
-    //}
+    else
+    {
+      printDebug("getData: myICM.dataReady = " + (String)myICM.dataReady() + "\r\n");
+    }
+
   }
 
   //Append all external sensor data on linked list to outputData

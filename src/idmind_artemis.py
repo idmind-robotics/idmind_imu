@@ -22,9 +22,9 @@ LOGS = 5
 
 class IDMindIMU:
     """
-    This class extracts data from the Sparkfun Razor M0 9DoF IMU.
-    The .ino file must be uploaded to the unit. It will publish to /imu the values of orientation, angular velocity
-    and linear acceleration.
+    This class extracts data from the OpenLogArtemis with ICM-20948 IMU.
+    The OpenLog_Artemis sketch must be uploaded to the unit in order to communicate [timestamp,frquency,Q1,Q2,Q3]
+    It may be able to output more information if more devices are attached in the future.
     In case the connection is lost, it will try to reconnect.
 
     TODO: Allow for calibration of components

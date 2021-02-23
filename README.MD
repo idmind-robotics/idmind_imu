@@ -16,6 +16,14 @@ This package contains the nodes responsible for communication with IMU devices a
     </include>
     
 ### Supported devices:
+##### SparkFun OpenLog_Artemis (with ICM-20948 IMU)
+Website: https://www.sparkfun.com/products/16832
+
+Usage: 
+1. Install ICM-20948 Library (might have to manually replace files under Arduino/libraries) - https://github.com/sparkfun/SparkFun_ICM-20948_ArduinoLibrary. Uncomment line 29 of ICM_20948_C.h to enable DMP.
+2. Install Sparkfun Apollo3 Boards (version 1.2.1, because 2.0 did not work as of Feb2021). Select the "Sparkfun Artemis RedBoard ATP"
+3. Upload OpenLog_Artemis Sketch to the board (this is not the original firmware)
+
 ##### SparkFun 9DoF Razor IMU M0 - razor
 Website: https://www.sparkfun.com/products/14001
 
