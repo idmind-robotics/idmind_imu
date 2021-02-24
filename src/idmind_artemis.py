@@ -14,7 +14,7 @@ from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
 
 from idmind_serial2.idmind_serialport import IDMindSerial
-from idmind_messages.msg import Log
+from idmind_msgs.msg import Log
 
 VERBOSE = 5
 LOGS = 5
@@ -22,9 +22,9 @@ LOGS = 5
 
 class IDMindIMU:
     """
-    This class extracts data from the OpenLogArtemis with ICM-20948 IMU.
-    The OpenLog_Artemis sketch must be uploaded to the unit in order to communicate [timestamp,frquency,Q1,Q2,Q3]
-    It may be able to output more information if more devices are attached in the future.
+    This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
+    The idmind_artemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, angular velocity
+    and linear acceleration.
     In case the connection is lost, it will try to reconnect.
 
     TODO: Allow for calibration of components
@@ -57,38 +57,37 @@ class IDMindIMU:
         """
         connected = False
         while not connected and not rospy.is_shutdown():
-            try:
-                self.ser = IDMindSerial("/dev/idmind-imu", baudrate=115200, timeout=1)
-                connected = True
-            except SerialException:
-                self.log("Unable to connect to /dev/idmind-imu.", 2)
-            except Exception as serial_exc:
-                self.log("Exception caught: {}".format(serial_exc), 2)
-            if not connected:
-                self.log("Searching on other ports", 5)
-                for addr in [comport.device for comport in serial.tools.list_ports.comports()]:
-                    # If the lsof call returns an output, then the port is already in use!
-                    try:
-                        subprocess.check_output(['lsof', '+wt', addr])
-                        continue
-                    except subprocess.CalledProcessError:
-                        self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
-                        imu_data = self.ser.read_until("\r\n")
-                        if self.parse_msg(imu_data):
-                            connected = True
-                            self.log("Imu found on {}".format(addr), 5)
-                            break
-                        else:
-                            self.log("Imu not found on {}".format(addr), 7)
-                    except KeyboardInterrupt:
-                        self.log("Node shutdown by user.", 2)
-                        raise KeyboardInterrupt()
-                    except SerialException:
-                        self.log("Unable to connect to "+addr, 2)
-                    except Exception as serial_exc:
-                        self.log(serial_exc, 2)
-                else:
-                    self.log("No other devices found.", 5)
+            self.log("Searching for IMU", 5)
+            for addr in [comport.device for comport in serial.tools.list_ports.comports()]:
+                # If the lsof call returns an output, then the port is already in use!
+                try:
+                    subprocess.check_output(['lsof', '+wt', addr])
+                    continue
+                except subprocess.CalledProcessError:
+                    self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
+                    rospy.sleep(5)
+                    self.ser.flush()
+                    self.ser.reset_input_buffer()
+                    self.ser.reset_output_buffer()
+                    self.ser.write(bytearray([0x20]))
+                    imu_data = self.ser.readline()
+                    print(imu_data)
+                    if "IDMind OpenLog_Artemis" in imu_data:
+                        connected = True
+                        self.log("Imu found on {}".format(addr), 5)
+                        break
+                    else:
+                        self.log("Imu not found on {}".format(addr), 7)
+
+                except KeyboardInterrupt:
+                    self.log("Node shutdown by user.", 2)
+                    raise KeyboardInterrupt()
+                except SerialException:
+                    self.log("Unable to connect to "+addr, 2)
+                except Exception as serial_exc:
+                    self.log(serial_exc, 2)
+            else:
+                self.log("No other devices found.", 5)
 
             if not connected:
                 self.log("IMU not found. Waiting 5 secs to try again.", 1)
