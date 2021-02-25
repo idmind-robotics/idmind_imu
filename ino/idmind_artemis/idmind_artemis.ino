@@ -19,6 +19,11 @@ const byte PIN_IMU_CHIP_SELECT = 44;
 ICM_20948_SPI myICM;  // If using SPI create an ICM_20948_SPI object
 
 int incomingByte = 0;
+int discarded = 0;
+float q1 = 0.0;
+float q2 = 0.0;
+float q3 = 0.0;
+float q4 = 0.0;
 
 void setup() {
   setPowerLED(HIGH);
@@ -34,29 +39,18 @@ void setup() {
   setStatusLED(LOW);  
 }
 
-void loop() {
+void loop() {  
   if(Serial.available() > 0){
     // read the incoming byte:
     incomingByte = Serial.read();
-    if(incomingByte == 0x20){
+    if(incomingByte == 0x20 or incomingByte == 's'){
       Serial.print(0x20);
-      Serial.println("IDMind OpenLog_Artemis");
-      delay(500);
+      Serial.println("IDMind OpenLog_Artemis\r\n");            
     }
+    if(incomingByte == 'r'){
+      Serial.printf("Q1:%.3f|Q2:%.3f|Q3:%.3f|Q4:%.3f\r\n", q1, q2, q3, q4);
+    }     
   }
-  /*
-   * This Block probably does not work with DMP active, so it is better to comment it out 
-   */
-  /*if( myICM.dataReady() ){
-    myICM.getAGMT();                // The values are only updated when you call 'getAGMT'
-//    printRawAGMT( myICM.agmt );     // Uncomment this to see the raw values, taken directly from the agmt structure
-    printScaledAGMT( &myICM );   // This function takes into account the scale settings from when the measurement was made to calculate the values with units
-    delay(30);
-  }else{
-    Serial.println("Waiting for data");
-    delay(500);
-  }*/
-  
   // Read any DMP data waiting in the FIFO
   // Note:
   //    readDMPdataFromFIFO will return ICM_20948_Stat_FIFONoDataAvail if no data or incomplete data is available.
@@ -83,17 +77,17 @@ void loop() {
       //Serial.printf("Quat9 data is: Q1:%ld Q2:%ld Q3:%ld Accuracy:%d\r\n", data.Quat9.Data.Q1, data.Quat9.Data.Q2, data.Quat9.Data.Q3, data.Quat9.Data.Accuracy);
 
       // Scale to +/- 1
-      float q1 = ((float)data.Quat9.Data.Q1) / 1073741824.0; // Convert to float. Divide by 2^30
-      float q2 = ((float)data.Quat9.Data.Q2) / 1073741824.0; // Convert to float. Divide by 2^30
-      float q3 = ((float)data.Quat9.Data.Q3) / 1073741824.0; // Convert to float. Divide by 2^30
-      float q4 = sqrt(1-q1*q1-q2*q2-q3*q3);
-      
-      //Serial.printf("Q1:%.3f Q2:%.3f Q3:%.3f Q4:%.3f\r\n", q1, q2, q3, q4);
+      q1 = ((float)data.Quat9.Data.Q1) / 1073741824.0; // Convert to float. Divide by 2^30
+      q2 = ((float)data.Quat9.Data.Q2) / 1073741824.0; // Convert to float. Divide by 2^30
+      q3 = ((float)data.Quat9.Data.Q3) / 1073741824.0; // Convert to float. Divide by 2^30
+      q4 = sqrt(1-q1*q1-q2*q2-q3*q3);
+      if(q3 < 0)
+        q4 = -q4;
     }
   }
 
   if ( myICM.status != ICM_20948_Stat_FIFOMoreDataAvail ) // If more data is available then we should read it right away - and not delay
   {
     delay(10);
-  }  
+  }    
 }

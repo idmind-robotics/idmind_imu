@@ -176,11 +176,13 @@ bool beginIMU(){
 
   // Enable the DMP orientation sensor
   success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_ORIENTATION) == ICM_20948_Stat_Ok);
+  //success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_LINEAR_ACCELERATION) == ICM_20948_Stat_Ok);
 
   // Configuring DMP to output data at multiple ODRs:
   // DMP is capable of outputting multiple sensor data at different rates to FIFO.
-  // Set the DMP Output Data Rate for Quat9 to 12Hz.
-  success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat9, 12) == ICM_20948_Stat_Ok);
+  // Set the DMP Output Data Rate for Quat9 to 20Hz.
+  success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat9, 20) == ICM_20948_Stat_Ok);
+  //success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Accel, 20) == ICM_20948_Stat_Ok);
 
   // Enable the FIFO
   success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
