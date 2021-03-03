@@ -48,7 +48,7 @@ class IDMindIMU:
         self.ser = None
         self.connection()
 
-        self.imu_pub = rospy.Publisher("imu", Imu, queue_size=10)
+        self.imu_pub = rospy.Publisher("{}/imu".format(rospy.get_name()), Imu, queue_size=10)
         self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)
 
         rospy.Service("{}/calibration".format(rospy.get_name()), Trigger, self.request_calibration)
