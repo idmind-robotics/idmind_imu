@@ -42,7 +42,8 @@ class IDMindIMU:
         self.calibration = True
         self.imu_offset = Quaternion()
         self.imu_offset.w = -1
-
+        self.tf_prefix = rospy.get_param("~tf_prefix", "")
+        
         # Connect to IMU
         self.ser = None
         self.connection()
@@ -175,7 +176,7 @@ class IDMindIMU:
             [yaw, pitch, roll, acc_x, acc_y, acc_z, w_x, w_y, w_z] = self.parse_msg()
 
             imu_msg = Imu()
-            imu_msg.header.frame_id = "base_link_imu"
+            imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
 
             # Compute the Orientation based on the offset q
@@ -191,9 +192,9 @@ class IDMindIMU:
 
             # Set the sensor covariances
             imu_msg.orientation_covariance = [
-                0.0025, 0, 0,
-                0, 0.0025, 0,
-                0, 0, 0.0025
+                0.005, 0, 0,
+                0, 0.005, 0,
+                0, 0, 0.005
             ]
 
             # Angular Velocity
@@ -203,14 +204,17 @@ class IDMindIMU:
             # Datasheet says:
             # - Noise Spectral Density: 0.015dps/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
-            diag = pow(0.015/np.sqrt(20), 2)
-            factor = 0.02
-
-            imu_msg.angular_velocity_covariance = [
-                diag, w_x*factor, w_x*factor,
-                w_y*factor, diag, w_y*factor,
-                w_z*factor, w_z*factor, diag
-            ]
+            #diag = pow(0.015/np.sqrt(20), 2)
+            #factor = 0.02
+            #imu_msg.angular_velocity_covariance = [
+            #    diag, w_x*factor, w_x*factor,
+            #    w_y*factor, diag, w_y*factor,
+            #    w_z*factor, w_z*factor, diag
+            #]
+            imu_msg.angular_velocity_covariance = [0.0] * 9
+            imu_msg.angular_velocity_covariance[0] = 0.005
+            imu_msg.angular_velocity_covariance[4] = 0.005
+            imu_msg.angular_velocity_covariance[8] = 0.005
             # Linear Acceleration
             imu_msg.linear_acceleration.x = acc_x/256.
             imu_msg.linear_acceleration.y = acc_y/256.
@@ -218,13 +222,17 @@ class IDMindIMU:
             # Datasheet says:
             # - Noise Spectral Density: 230microg/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
-            diag = pow(230e-6/np.sqrt(20), 2)/256.
-            factor = 0.02/256.
-            imu_msg.linear_acceleration_covariance = [
-                diag, acc_x*factor, acc_x*factor,
-                acc_y*factor, diag, acc_y*factor,
-                acc_z*factor, acc_z*factor, diag
-            ]
+            #diag = pow(230e-6/np.sqrt(20), 2)/256.
+            #factor = 0.02/256.
+            #imu_msg.linear_acceleration_covariance = [
+            #    diag, acc_x*factor, acc_x*factor,
+            #    acc_y*factor, diag, acc_y*factor,
+            #    acc_z*factor, acc_z*factor, diag
+            #]
+            imu_msg.linear_acceleration_covariance = [0.0] * 9
+            imu_msg.linear_acceleration_covariance[0] = 0.005
+            imu_msg.linear_acceleration_covariance[4] = 0.005
+            imu_msg.linear_acceleration_covariance[8] = 0.005
 
             # Message publishing
             self.imu_pub.publish(imu_msg)

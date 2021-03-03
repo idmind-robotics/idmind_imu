@@ -1,7 +1,8 @@
-<launch>
-    <!--<node pkg="idmind_razor" type="idmind_imu.py" name="idmind_imu" output="screen" >-->
+<launch>    
     <arg name="imu" default="artemis" />
+    <arg name="tf_prefix" default="" />
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
+        <param name="tf_prefix" value="$(arg tf_prefix)" />
         <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />
     </node>
 

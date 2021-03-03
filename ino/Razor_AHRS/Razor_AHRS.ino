@@ -266,11 +266,11 @@
 #define OUTPUT__FORMAT_BINARY 1 // Outputs data as binary float
 
 // Select your startup output mode and format here!
-int output_mode = OUTPUT__MODE_ANGLES;
+int output_mode = OUTPUT__MODE_ANGLES_AG_SENSORS;
 int output_format = OUTPUT__FORMAT_TEXT;
 
 // Select if serial continuous streaming output is enabled per default on startup.
-#define OUTPUT__STARTUP_STREAM_ON true  // true or false
+#define OUTPUT__STARTUP_STREAM_ON false  // true or false
 
 // If set true, an error message will be output if we fail to read sensor data.
 // Message format: "!ERR: reading <sensor>", followed by "\r\n".
@@ -313,14 +313,14 @@ float MAGN_Z_MAX = 600;
 
 // Magnetometer (extended calibration mode)
 // Set to true to use extended magnetometer calibration (compensates hard & soft iron errors)
-boolean CALIBRATION__MAGN_USE_EXTENDED = false;
-float magn_ellipsoid_center[3] = {0, 0, 0};
+boolean CALIBRATION__MAGN_USE_EXTENDED = true;
+float magn_ellipsoid_center[3] = {197.977, 985.179, -196.446};
 float magn_ellipsoid_transform[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
 // Gyroscope
 // "gyro x,y,z (current/average) = .../OFFSET_X  .../OFFSET_Y  .../OFFSET_Z
 float GYRO_AVERAGE_OFFSET_X = 0.01;
-float GYRO_AVERAGE_OFFSET_Y = 0.00;
+float GYRO_AVERAGE_OFFSET_Y = 0.01;
 float GYRO_AVERAGE_OFFSET_Z = 0.00;
 
 /*
@@ -372,7 +372,7 @@ boolean DEBUG__NO_DRIFT_CORRECTION = true;
 
 #define DEBUG__LOOP_DELAY 1
 // Set to true to enable auto-calibration features of the M0 (does not apply to magnetometers)
-#define DEBUG__USE_DMP_M0 false
+#define DEBUG__USE_DMP_M0 true
 // Set to true to disable the use of the DCM algorithm
 #define DEBUG__USE_ONLY_DMP_M0 false
 
@@ -1008,6 +1008,9 @@ void loop()
       else if (command == 'D') // Bluetooth "#DISCONNECT" message (does the same as "#o0")
         turn_output_stream_off();
 #endif // OUTPUT__HAS_RN_BLUETOOTH == true
+    else if (command=='F'){
+      LOG_PORT.println("IDMind OpenLog_Artemis");
+    }
     }
     else
     { } // Skip character
