@@ -123,6 +123,19 @@ class IDMindIMU:
         if LOGS >= (log_level if log_level != -1 else msg_level):
             self.logging.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
 
+    def publish_diagnostic(self, level, message):
+        """ Auxiliary method to publish Diagnostic messages """
+        diag_msg = DiagnosticArray()
+        diag_msg.header.frame_id = "imu"
+        diag_msg.header.stamp = rospy.Time.now()
+        imu_msg = DiagnosticStatus()
+        imu_msg.name = "IMU"
+        imu_msg.hardware_id = "Razor IMU"
+        imu_msg.level = level
+        imu_msg.message = message
+        diag_msg.status.append(imu_msg)
+        self.diag_pub.publish(diag_msg)
+
     def request_calibration(self, _req):
         self.calibration = True
         return TriggerResponse(True, "Requesting calibration")
@@ -280,22 +293,27 @@ class IDMindIMU:
             try:
                 self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)
                 if self.calibration:
+                    self.publish_diagnostic(1, "Calibrating")
                     self.calibrate_imu()
                 else:
                     self.update_imu()
                     self.publish_imu()
                 imu_exception = 0
+                self.publish_diagnostic(0, "OK")
                 r.sleep()
             except IMUException as err:
                 imu_exception = imu_exception + 1
+                self.publish_diagnostic(1, "Error reading IMU")
                 if imu_exception > 10:
                     self.log("Failure connecting to IMU. Restarting..", 3)
+                    self.publish_diagnostic(2, "Failure connecting to IMU")
                     if not self.connection():
                         rospy.sleep(2)
             except KeyboardInterrupt:
                 self.log("{}: Shutting down by user".format(rospy.get_name()), 2)
                 break
             except IOError as io_exc:
+                self.publish_diagnostic(1, "Lost connection to IMU")
                 self.log("Lost connection to IMU", 3)
                 if not self.connection():
                     rospy.sleep(2)

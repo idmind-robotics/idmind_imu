@@ -17,6 +17,8 @@ from std_srvs.srv import Trigger, TriggerResponse
 from idmind_serial2.idmind_serialport import IDMindSerial
 from idmind_msgs.msg import Log
 
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+
 VERBOSE = 5
 LOGS = 5
 
@@ -34,6 +36,7 @@ class IDMindIMU:
 
         # Logging
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
+        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
         self.val_exc = 0
 
         self.imu_data = ""
@@ -80,6 +83,7 @@ class IDMindIMU:
                     if "IDMind OpenLog_Artemis" in imu_data:
                         connected = True
                         self.log("Imu found on {}".format(addr), 5)
+                        self.publish_diagnostic(0, "IMU Detected on {}".format(addr))
                         break
                     else:
                         try:
@@ -101,6 +105,7 @@ class IDMindIMU:
 
             if not connected:
                 self.log("IMU not found. Waiting 5 secs to try again.", 1)
+                self.publish_diagnostic(2, "IMU not found")
                 rospy.sleep(5)
             else:
                 self.calibration = True
@@ -280,9 +285,21 @@ class IDMindIMU:
 
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
+    
+    def publish_diagnostic(self, level, message):
+        """ Auxiliary method to publish Diagnostic messages """
+        diag_msg = DiagnosticArray()
+        diag_msg.header.frame_id = "imu"
+        diag_msg.header.stamp = rospy.Time.now()
+        imu_msg = DiagnosticStatus()
+        imu_msg.name = "IMU"
+        imu_msg.hardware_id = "OpenLog Artemis IMU"
+        imu_msg.level = level
+        imu_msg.message = message
+        diag_msg.status.append(imu_msg)
+        self.diag_pub.publish(diag_msg)
 
     def start(self):
-
         r = rospy.Rate(20)
         while not rospy.is_shutdown():
             try:
@@ -293,11 +310,13 @@ class IDMindIMU:
                     # self.get_imu_data()
                     # self.parse_msg()
                     self.compute_imu_msg()
+                self.publish_diagnostic(0, "OK")
                 r.sleep()
             except KeyboardInterrupt:
                 self.log("{}: Shutting down by user".format(rospy.get_name()), 2)
                 break
             except IOError as io_exc:
+                self.publish_diagnostic(1, "Lost connection to IMU")
                 self.log("Lost connection to IMU", 3)
                 if not self.connection():
                     rospy.sleep(2)
