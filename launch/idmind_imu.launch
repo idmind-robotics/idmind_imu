@@ -17,7 +17,7 @@
         <!-- Drift Gain [-1 - 1]  -->
         <param name="zeta" value="0.001" />
         <!-- Orientation stdev [0 - 1]-->
-        <param name="orientation_stdev" value="0.001" />
+        <param name="orientation_stdev" value="0.01" />
         <!-- Magnetometer parameters are ignored -->
         <!-- Non Dynamic Reconfigurable -->
         <param name="use_mag" value="false" />
