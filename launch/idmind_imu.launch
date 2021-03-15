@@ -1,12 +1,13 @@
 <launch>    
     <arg name="imu" default="artemis" />
     <arg name="tf_prefix" default="" />
+    <arg name="use_filter" default="true" />
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
         <param name="tf_prefix" value="$(arg tf_prefix)" />
         <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />        
 
     </node>
-    <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter" output="screen">
+    <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter" output="screen" if="$(arg use_filter)">
         <!-- Topics -->
         <remap from="imu/data_raw" to="idmind_imu/imu" />
         <remap from="imu/data" to="imu" />

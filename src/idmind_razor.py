@@ -14,10 +14,18 @@ from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
 
 from idmind_serial2.idmind_serialport import IDMindSerial
-from idmind_messages.msg import Log
+from idmind_msgs.msg import Log
 
-VERBOSE = 5
-LOGS = 5
+VERBOSE = 4
+LOGS = 4
+
+
+class IMUException(Exception):
+    """ Exception raised by IMU """
+    def __init__(self, device, message):
+        self.device = device
+        self.message = message
+        super(IMUException, self).__init__(self.message)
 
 
 class IDMindIMU:
@@ -74,12 +82,15 @@ class IDMindIMU:
                     except subprocess.CalledProcessError:
                         self.ser = IDMindSerial(addr=addr, baudrate=115200, timeout=0.5)
                         imu_data = self.ser.read_until("\r\n")
-                        if self.parse_msg(imu_data):
-                            connected = True
-                            self.log("Imu found on {}".format(addr), 5)
-                            break
-                        else:
-                            self.log("Imu not found on {}".format(addr), 7)
+                        try:
+                            if self.parse_msg(imu_data):
+                                connected = True
+                                self.log("Imu found on {}".format(addr), 2)
+                                break
+                            else:
+                                self.log("Imu not found on {}".format(addr), 5)
+                        except IMUException:
+                            self.log("Imu not found on {}".format(addr), 5)
                     except KeyboardInterrupt:
                         self.log("Node shutdown by user.", 2)
                         raise KeyboardInterrupt()
@@ -112,6 +123,19 @@ class IDMindIMU:
         if LOGS >= (log_level if log_level != -1 else msg_level):
             self.logging.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
 
+    def publish_diagnostic(self, level, message):
+        """ Auxiliary method to publish Diagnostic messages """
+        diag_msg = DiagnosticArray()
+        diag_msg.header.frame_id = "imu"
+        diag_msg.header.stamp = rospy.Time.now()
+        imu_msg = DiagnosticStatus()
+        imu_msg.name = "IMU"
+        imu_msg.hardware_id = "Razor IMU"
+        imu_msg.level = level
+        imu_msg.message = message
+        diag_msg.status.append(imu_msg)
+        self.diag_pub.publish(diag_msg)
+
     def request_calibration(self, _req):
         self.calibration = True
         return TriggerResponse(True, "Requesting calibration")
@@ -138,9 +162,8 @@ class IDMindIMU:
             elif values[0] == "G:":
                 w = [float(values[1]), float(values[2]), float(values[3])]
             else:
-                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
-                self.log(values[0], 5)
-                return False
+                self.log("Exception parsing message - {}".format(imu_data), 5)
+                raise IMUException("razor", "Exception parsing message - {}".format(imu_data))
         return [new_q, a, w]
 
     def calibrate_imu(self):
@@ -205,9 +228,9 @@ class IDMindIMU:
             ]
 
             imu_data = self.ser.read_until("\r\n")
-            if len(imu_data) == 0:
+            if len(imu_data) == 0:                
                 self.log("IMU is not answering", 2)
-                return
+                raise IMUException("razor", "IMU is not answering")
             try:
                 [q, a, w] = self.parse_msg(imu_data)
                 imu_msg.orientation.x = q[0]
@@ -220,9 +243,11 @@ class IDMindIMU:
                 imu_msg.angular_velocity.x = w[0]
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
-            except:
-                self.log("{}: IMU is giving bad answers - {}".format(rospy.get_name(), imu_data), 5)
-                return
+            except IMUException as err:
+                raise IMUException
+            except Exception as err:
+                self.log("Exception generating IMU Message - {}".format(err), 5)
+                raise IMUException("razor", "Exception generating IMU Message - {}".format(err))
             # Handle message header
             imu_msg.header.frame_id = "base_link_imu"
             imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
@@ -263,19 +288,32 @@ class IDMindIMU:
     def start(self):
 
         r = rospy.Rate(20)
+        imu_exception = 0
         while not rospy.is_shutdown():
             try:
                 self.log("Bytes waiting: {}".format(self.ser.in_waiting), 7)
                 if self.calibration:
+                    self.publish_diagnostic(1, "Calibrating")
                     self.calibrate_imu()
                 else:
                     self.update_imu()
                     self.publish_imu()
+                imu_exception = 0
+                self.publish_diagnostic(0, "OK")
                 r.sleep()
+            except IMUException as err:
+                imu_exception = imu_exception + 1
+                self.publish_diagnostic(1, "Error reading IMU")
+                if imu_exception > 10:
+                    self.log("Failure connecting to IMU. Restarting..", 3)
+                    self.publish_diagnostic(2, "Failure connecting to IMU")
+                    if not self.connection():
+                        rospy.sleep(2)
             except KeyboardInterrupt:
                 self.log("{}: Shutting down by user".format(rospy.get_name()), 2)
                 break
             except IOError as io_exc:
+                self.publish_diagnostic(1, "Lost connection to IMU")
                 self.log("Lost connection to IMU", 3)
                 if not self.connection():
                     rospy.sleep(2)
