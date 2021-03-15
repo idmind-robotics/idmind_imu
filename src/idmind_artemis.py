@@ -285,7 +285,7 @@ class IDMindIMU:
 
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
-    
+
     def publish_diagnostic(self, level, message):
         """ Auxiliary method to publish Diagnostic messages """
         diag_msg = DiagnosticArray()
