@@ -24,8 +24,8 @@ LOGS = 5
 class IDMindIMU:
     """
     This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
-    The idmind_artemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, angular velocity
-    and linear acceleration.
+    The idmind_artemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, 
+    angular velocity and linear acceleration.
     In case the connection is lost, it will try to reconnect.
 
     TODO: Allow for calibration of components
@@ -43,7 +43,7 @@ class IDMindIMU:
         self.imu_offset = Quaternion()
         self.imu_offset.w = -1
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
-        
+
         # Connect to IMU
         self.ser = None
         self.connection()
@@ -192,9 +192,9 @@ class IDMindIMU:
 
             # Set the sensor covariances
             imu_msg.orientation_covariance = [
-                0.005, 0, 0,
-                0, 0.005, 0,
-                0, 0, 0.005
+                0.01, 0, 0,
+                0, 0.01, 0,
+                0, 0, 0.01
             ]
 
             # Angular Velocity
