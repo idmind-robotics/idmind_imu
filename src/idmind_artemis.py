@@ -182,7 +182,7 @@ class IDMindIMU:
 
             imu_msg = Imu()
             imu_msg.header.frame_id = self.tf_prefix+"imu"
-            imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
+            imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
             # Compute the Orientation based on the offset q
             raw = transformations.quaternion_from_euler(roll*3.14/180., pitch*3.14/180., yaw*3.14/180.)
@@ -220,10 +220,16 @@ class IDMindIMU:
             imu_msg.angular_velocity_covariance[0] = 0.005
             imu_msg.angular_velocity_covariance[4] = 0.005
             imu_msg.angular_velocity_covariance[8] = 0.005
+            # imu_msg.angular_velocity_covariance = [-1] * 9
+
             # Linear Acceleration
-            imu_msg.linear_acceleration.x = acc_x/256.
-            imu_msg.linear_acceleration.y = acc_y/256.
-            imu_msg.linear_acceleration.z = acc_z/256.
+            imu_msg.linear_acceleration.x = acc_x*9.82/256.
+            imu_msg.linear_acceleration.y = acc_y*9.82/256.
+            imu_msg.linear_acceleration.z = acc_z*9.82/256.            
+            #imu_msg.linear_acceleration.x = 0
+            #imu_msg.linear_acceleration.y = 0
+            #imu_msg.linear_acceleration.z = 9.82
+            #imu_msg.linear_acceleration_covariance = [-1] * 9
             # Datasheet says:
             # - Noise Spectral Density: 230microg/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
