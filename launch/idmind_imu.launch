@@ -2,10 +2,14 @@
     <arg name="imu" default="artemis" />
     <arg name="tf_prefix" default="" />
     <arg name="use_filter" default="true" />
+    <arg name="target_frame" default="$(arg tf_prefix)imu" />
+
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
         <param name="tf_prefix" value="$(arg tf_prefix)" />
+        <param name="target_frame" value="$(arg target_frame)" />
         <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />        
     </node>
+    
     <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter" output="screen" if="$(arg use_filter)">
         <!-- Topics -->
         <remap from="imu/data_raw" to="idmind_imu/imu" />
@@ -21,7 +25,7 @@
         <!-- Non Dynamic Reconfigurable -->
         <param name="use_mag" value="false" />
         <!-- Frames -->
-        <param name="world_frame" value="enu" />
+        <param name="world_frame" value="nwu" />
         <param name="fixed_frame" value="$(arg tf_prefix)base_link" />
         <param name="publish_tf" value="false" />
         <param name="publish_debug_topics" value="true" />
