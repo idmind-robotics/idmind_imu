@@ -7,17 +7,69 @@ from serial import SerialException
 from math import degrees
 
 import rospy
+import tf2_ros
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
 
-from idmind_serial2.idmind_serialport import IDMindSerial
 from idmind_msgs.msg import Log
+from idmind_serial2.idmind_serialport import IDMindSerial
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+from tf2_geometry_msgs import do_transform_pose, do_transform_vector3
+from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, QuaternionStamped, Quaternion
 
 VERBOSE = 4
 LOGS = 4
+
+
+def do_transform_quaternion(quaternion_msg, transform):
+    # Use PoseStamped to transform the Quaternion
+    src_ps = PoseStamped()
+    src_ps.header = quaternion_msg.header
+    src_ps.pose.orientation = quaternion_msg.quaternion
+    tgt_ps = do_transform_pose(src_ps, transform)
+    tgt_o = QuaternionStamped()
+    tgt_o.header = tgt_ps.header
+    tgt_o.quaternion = tgt_ps.pose.orientation
+    return tgt_o
+
+
+def do_transform_imu(imu_msg, transform):
+    """
+    Transforms the given Imu message into the given target frame
+    :param imu_msg:
+    :type imu_msg: Imu
+    :param transform:
+    :type transform: TransformStamped
+    :return: Imu message transformed into the target frame
+    :rtype: Imu
+    """
+    src_l = Vector3Stamped()
+    src_l.header = imu_msg.header
+    src_l.vector = imu_msg.linear_acceleration
+    src_a = Vector3Stamped()
+    src_a.header = imu_msg.header
+    src_a.vector = imu_msg.angular_velocity
+    src_o = QuaternionStamped()
+    src_o.header = imu_msg.header
+    src_o.quaternion = imu_msg.orientation
+
+    tgt_l = do_transform_vector3(src_l, transform)
+    tgt_a = do_transform_vector3(src_a, transform)
+    tgt_o = do_transform_quaternion(src_o, transform)
+
+    tgt_imu = copy.deepcopy(imu_msg)
+    tgt_imu.header.frame_id = transform.child_frame_id
+    tgt_imu.linear_acceleration = tgt_l.vector
+    tgt_imu.angular_velocity = tgt_a.vector
+    tgt_imu.orientation = tgt_o.quaternion
+    return tgt_imu
+
+
+tf2_ros.TransformRegistration().add(Imu, do_transform_quaternion)
+tf2_ros.TransformRegistration().add(Imu, do_transform_imu)
 
 
 class IMUException(Exception):
@@ -41,27 +93,36 @@ class IDMindIMU:
 
         # Logging
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
+        self.diag_pub = rospy.Publisher("diagnostics", DiagnosticArray, queue_size=10)
         self.val_exc = 0
 
+        self.imu_data = ""
+        self.last_imu = Imu()
         self.imu_reading = Imu()
         self.calibration = True
         self.imu_offset = Quaternion()
         self.imu_offset.w = -1
+        self.tf_prefix = rospy.get_param("~tf_prefix", "")
+        self.target_frame = rospy.get_param("~target_frame", "imu")
 
         # Connect to IMU
         self.ser = None
         self.connection()
 
-        self.imu_pub = rospy.Publisher("/imu", Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("/imu/euler_string", String, queue_size=10)
+        self.tf_buffer = tf2_ros.Buffer()
+        self.transform_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        rospy.Service("/idmind_razor/calibration", Trigger, self.request_calibration)
+        self.imu_pub = rospy.Publisher("{}/imu".format(rospy.get_name()), Imu, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)
+
+        rospy.Service("{}/calibration".format(rospy.get_name()), Trigger, self.request_calibration)
 
     def connection(self):
         """
-        Function that connects to IMU port. Tries /dev/idmind-imu (created by udev rules) and then tries all available ports
-        Repeats until found. Flags for calibration.
-        :return:
+            Function that connects to IMU port.
+            Tries /dev/idmind-imu (created by udev rules) and then tries all available ports
+            Repeats until found. Flags for calibration.
+            :return:
         """
         connected = False
         while not connected and not rospy.is_shutdown():
@@ -86,6 +147,7 @@ class IDMindIMU:
                             if self.parse_msg(imu_data):
                                 connected = True
                                 self.log("Imu found on {}".format(addr), 2)
+                                self.publish_diagnostic(0, "IMU Detected on {}".format(addr))
                                 break
                             else:
                                 self.log("Imu not found on {}".format(addr), 5)
@@ -228,7 +290,7 @@ class IDMindIMU:
             ]
 
             imu_data = self.ser.read_until("\r\n")
-            if len(imu_data) == 0:                
+            if len(imu_data) == 0:
                 self.log("IMU is not answering", 2)
                 raise IMUException("razor", "IMU is not answering")
             try:
@@ -243,14 +305,20 @@ class IDMindIMU:
                 imu_msg.angular_velocity.x = w[0]
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
+
             except IMUException as err:
                 raise IMUException
             except Exception as err:
                 self.log("Exception generating IMU Message - {}".format(err), 5)
                 raise IMUException("razor", "Exception generating IMU Message - {}".format(err))
+
             # Handle message header
-            imu_msg.header.frame_id = "base_link_imu"
+            imu_msg.header.frame_id = "imu"
             imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
+
+            # Transform IMU message to another frame
+            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)
+            imu_msg = do_transform_imu(imu_msg, transf)
 
             self.publish_euler_imu(imu_msg)
 
@@ -265,6 +333,15 @@ class IDMindIMU:
         except Exception as imu_exc:
             self.log(imu_exc, 3)
             raise imu_exc
+
+    def get_transform(self, source="imu", target="imu"):
+        """ Returns the transform between two frames """
+        try:
+            transformation = self.tf_buffer.lookup_transform(target, source, rospy.Duration(0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            self.log('Unable to find the transformation from {} to {}'.format(source, target), 2, alert="error")
+            transformation = TransformStamped()
+        return transformation
 
     def publish_imu(self):
         self.imu_pub.publish(self.imu_reading)
