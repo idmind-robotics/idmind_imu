@@ -7,6 +7,7 @@ from serial import SerialException
 from math import degrees
 
 import rospy
+import copy
 import tf2_ros
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
@@ -171,17 +172,22 @@ class IDMindIMU:
 
         return connected
 
-    def log(self, msg, msg_level, log_level=-1):
+    def log(self, msg, msg_level, log_level=-1, alert="info"):
         """
-        Logging method for both verbose and logging topic
-        :param msg: Message to be logged/displayed
-        :param msg_level: if this value is lower than VERBOSE, display message on screen
-        :param log_level: (optional) if this value is lower than LOGS, publish message
+        Log function that publish in screen and in topic
+        :param msg: Message to be published
+        :param msg_level: Message level (1-10, where 1 is most important)
+        :param log_level: Message level for logging (1-10, optional, -1 uses the same as msg_level)
+        :param alert: Alert level of message - "info", "warn" or "error"
         :return:
         """
-
         if VERBOSE >= msg_level:
-            rospy.loginfo("{}: {}".format(rospy.get_name(), msg))
+            if alert == "info":
+                rospy.loginfo("{}: {}".format(rospy.get_name(), msg))
+            elif alert == "warn":
+                rospy.logwarn("{}: {}".format(rospy.get_name(), msg))
+            elif alert == "error":
+                rospy.logerr("{}: {}".format(rospy.get_name(), msg))
         if LOGS >= (log_level if log_level != -1 else msg_level):
             self.logging.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
 
@@ -313,7 +319,7 @@ class IDMindIMU:
                 raise IMUException("razor", "Exception generating IMU Message - {}".format(err))
 
             # Handle message header
-            imu_msg.header.frame_id = "imu"
+            imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now() + rospy.Duration(0.5)
 
             # Transform IMU message to another frame
