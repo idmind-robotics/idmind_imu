@@ -82,7 +82,7 @@ class IDMindIMU:
 
     TODO: Allow for calibration of components
     """
-    def __init__(self):                
+    def __init__(self):
         # Logging
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
