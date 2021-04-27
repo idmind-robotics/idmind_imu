@@ -105,9 +105,7 @@ class IDMindIMU:
         self.transform_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         self.imu_pub = rospy.Publisher("{}/imu".format(rospy.get_name()), Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)
-
-        rospy.Service("{}/calibration".format(rospy.get_name()), Trigger, self.request_calibration)
+        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)        
 
     def connection(self):
         """
@@ -186,10 +184,6 @@ class IDMindIMU:
                 rospy.logerr("{}: {}".format(rospy.get_name(), msg))
         if LOGS >= (log_level if log_level != -1 else msg_level):
             self.logging.publish(rospy.Time.now().to_sec(), rospy.get_name(), msg)
-
-    def request_calibration(self, _req):
-        self.calibration = True
-        return TriggerResponse(True, "Requesting calibration")
 
     def get_imu_data(self):
         """
@@ -300,7 +294,7 @@ class IDMindIMU:
 
             # Transform IMU message to another frame
             transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)            
-            imu_msg = do_transform_imu(imu_msg, transf)            
+            imu_msg = do_transform_imu(imu_msg, transf)
             # Message publishing
             self.imu_pub.publish(imu_msg)
             new_q = imu_msg.orientation
@@ -343,10 +337,10 @@ class IDMindIMU:
                     self.get_imu_data()
                     [yaw, pitch, roll, acc_x, acc_y, acc_z, w_x, w_y, w_z] = self.parse_msg()
                     q = transformations.quaternion_from_euler(roll*3.14/180., pitch*3.14/180., yaw*3.14/180.)
-                    self.imu_offset.x = q[0]
-                    self.imu_offset.y = q[1]
-                    self.imu_offset.z = q[2]
-                    self.imu_offset.w = -q[3]
+                    # self.imu_offset.x = q[0]
+                    # self.imu_offset.y = q[1]
+                    # self.imu_offset.z = q[2]
+                    # self.imu_offset.w = -q[3]
                     calibrated = True
                     self.calibration = False
                 else:
