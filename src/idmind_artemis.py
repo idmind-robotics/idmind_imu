@@ -76,7 +76,7 @@ tf2_ros.TransformRegistration().add(Imu, do_transform_imu)
 class IDMindIMU:
     """
     This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
-    The idmind_artemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, 
+    The OpenLogArtemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, 
     angular velocity and linear acceleration.
     In case the connection is lost, it will try to reconnect.
 
@@ -129,11 +129,11 @@ class IDMindIMU:
                     self.ser.flush()
                     self.ser.reset_input_buffer()
                     self.ser.reset_output_buffer()
-                    self.ser.write(bytearray(['#', 'F']))
+                    self.ser.write(bytearray(['f']))
                     rospy.sleep(0.5)
                     imu_data = self.ser.readline()
-                    self.log("Data: {}".format(imu_data), 2)
-                    if "IDMind OpenLog_Artemis" in imu_data:
+                    # self.log("Data: {}".format(imu_data), 2)
+                    if "IDMind OpenLog Artemis" in imu_data:
                         connected = True
                         self.log("Imu found on {}".format(addr), 5)
                         self.publish_diagnostic(0, "IMU Detected on {}".format(addr))
@@ -197,7 +197,7 @@ class IDMindIMU:
             This should be able to handle the message flow
         """
         data = ""
-        self.ser.write(bytearray(['#', 'f']))
+        self.ser.write(bytearray(['r']))
         while not rospy.is_shutdown():
             data += self.ser.readline()
             if len(data) > 0 and data[-1] == "\n":
@@ -210,14 +210,11 @@ class IDMindIMU:
 
     def parse_msg(self):
         try:
-            dev_data = self.imu_data.split("=")
-            if dev_data[0] == "#YPRAG":
-                self.log("Parsing message", 7)
-                # Method returns [yaw, pitch, roll, acc_x, acc_y, acc_z, w_x, w_y, w_z]
-                return [float(v) for v in dev_data[1].split(",")]
-            else:
-                self.log("Incorrect header from IMU msg", 5, alert="warn")
-                return False
+            dev_data = self.imu_data.split(" ")
+            msg = []
+            for elem in dev_data:
+                msg.append(float(elem.split(":")[1]))
+            return msg
         except IndexError as err:
             self.log("Short IMU message: {}".format(err), 2, alert="warn")
         except ValueError as err:
@@ -231,14 +228,15 @@ class IDMindIMU:
         try:
             # Get data
             self.get_imu_data()
-            [yaw, pitch, roll, acc_x, acc_y, acc_z, w_x, w_y, w_z] = self.parse_msg()
+            [q1, q2, q3, accuracy, roll, pitch, yaw, w_x, w_y, w_z, acc_x, acc_y, acc_z] = self.parse_msg()
 
             imu_msg = Imu()
             imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
             # Compute the Orientation based on the offset q
-            raw = transformations.quaternion_from_euler(roll*3.14/180., pitch*3.14/180., yaw*3.14/180.)
+            raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
+
             off = self.imu_offset
             corr_q = transformations.quaternion_multiply([raw[0], raw[1], raw[2], raw[3]], [off.x, off.y, off.z, off.w])
             new_q = Quaternion()
@@ -276,9 +274,9 @@ class IDMindIMU:
             # imu_msg.angular_velocity_covariance = [-1] * 9
 
             # Linear Acceleration
-            imu_msg.linear_acceleration.x = acc_x*9.82/256.
-            imu_msg.linear_acceleration.y = acc_y*9.82/256.
-            imu_msg.linear_acceleration.z = acc_z*9.82/256.            
+            imu_msg.linear_acceleration.x = acc_x
+            imu_msg.linear_acceleration.y = acc_y
+            imu_msg.linear_acceleration.z = acc_z
             #imu_msg.linear_acceleration.x = 0
             #imu_msg.linear_acceleration.y = 0
             #imu_msg.linear_acceleration.z = 9.82
@@ -299,8 +297,8 @@ class IDMindIMU:
             imu_msg.linear_acceleration_covariance[8] = 0.005
 
             # Transform IMU message to another frame
-            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)            
-            imu_msg = do_transform_imu(imu_msg, transf)            
+            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)
+            imu_msg = do_transform_imu(imu_msg, transf)
             # Message publishing
             self.imu_pub.publish(imu_msg)
             new_q = imu_msg.orientation
@@ -315,7 +313,7 @@ class IDMindIMU:
         except Exception as imu_exc:
             self.log(imu_exc, 3)
             raise imu_exc
-    
+
     def get_transform(self, source="imu", target="imu"):
         """ Returns the transform between two frames """
         try:
@@ -324,7 +322,7 @@ class IDMindIMU:
             self.log('Unable to find the transformation from {} to {}'.format(source, target), 2, alert="error")
             transformation = TransformStamped()
         return transformation
-    
+
     def calibrate_imu(self):
         """
             This method will save the current orientation as the offset.
@@ -341,8 +339,8 @@ class IDMindIMU:
                 self.get_imu_data()
                 if reads > 50:
                     self.get_imu_data()
-                    [yaw, pitch, roll, acc_x, acc_y, acc_z, w_x, w_y, w_z] = self.parse_msg()
-                    q = transformations.quaternion_from_euler(roll*3.14/180., pitch*3.14/180., yaw*3.14/180.)
+                    [q1, q2, q3, accuracy, roll, pitch, yaw, w_x, w_y, w_z, acc_x, acc_y, acc_z] = self.parse_msg()
+                    q = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
                     self.imu_offset.x = q[0]
                     self.imu_offset.y = q[1]
                     self.imu_offset.z = q[2]
