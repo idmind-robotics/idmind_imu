@@ -82,7 +82,7 @@ class IDMindIMU:
 
     TODO: Allow for calibration of components
     """
-    def __init__(self):                
+    def __init__(self):
         # Logging
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
@@ -293,7 +293,7 @@ class IDMindIMU:
             imu_msg.linear_acceleration_covariance[8] = 0.005
 
             # Transform IMU message to another frame
-            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)            
+            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)
             imu_msg = do_transform_imu(imu_msg, transf)
             # Message publishing
             self.imu_pub.publish(imu_msg)
@@ -309,7 +309,7 @@ class IDMindIMU:
         except Exception as imu_exc:
             self.log(imu_exc, 3)
             raise imu_exc
-    
+
     def get_transform(self, source="imu", target="imu"):
         """ Returns the transform between two frames """
         try:
@@ -318,7 +318,7 @@ class IDMindIMU:
             self.log('Unable to find the transformation from {} to {}'.format(source, target), 2, alert="error")
             transformation = TransformStamped()
         return transformation
-    
+
     def calibrate_imu(self):
         """
             This method will save the current orientation as the offset.
