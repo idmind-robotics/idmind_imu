@@ -228,9 +228,14 @@ class IDMindIMU:
             imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
+            
+            if ((q1 * q1) + (q2 * q2) + (q3 * q3)) < 1:
+                raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
+            else:
+                self.log("Inconsistent readings from IMU", 2, alert="warn")
+                return True
+            
             # Compute the Orientation based on the offset q
-            raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
-
             off = self.imu_offset
             corr_q = transformations.quaternion_multiply([raw[0], raw[1], raw[2], raw[3]], [off.x, off.y, off.z, off.w])
             new_q = Quaternion()
@@ -335,10 +340,10 @@ class IDMindIMU:
                     self.get_imu_data()
                     [q1, q2, q3, accuracy, roll, pitch, yaw, w_x, w_y, w_z, acc_x, acc_y, acc_z] = self.parse_msg()
                     q = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
-                    self.imu_offset.x = q[0]
-                    self.imu_offset.y = q[1]
-                    self.imu_offset.z = q[2]
-                    self.imu_offset.w = -q[3]
+                    # self.imu_offset.x = q[0]
+                    # self.imu_offset.y = q[1]
+                    # self.imu_offset.z = q[2]
+                    # self.imu_offset.w = -q[3]
                     calibrated = True
                     self.calibration = False
                 else:
