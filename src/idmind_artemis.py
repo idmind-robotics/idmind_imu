@@ -76,7 +76,7 @@ tf2_ros.TransformRegistration().add(Imu, do_transform_imu)
 class IDMindIMU:
     """
     This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
-    The OpenLogArtemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation, 
+    The OpenLogArtemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation,
     angular velocity and linear acceleration.
     In case the connection is lost, it will try to reconnect.
 
@@ -105,7 +105,7 @@ class IDMindIMU:
         self.transform_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         self.imu_pub = rospy.Publisher("{}/imu".format(rospy.get_name()), Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)        
+        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)
 
     def connection(self):
         """
@@ -228,13 +228,12 @@ class IDMindIMU:
             imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
-            
             if ((q1 * q1) + (q2 * q2) + (q3 * q3)) < 1:
                 raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
             else:
                 self.log("Inconsistent readings from IMU", 2, alert="warn")
                 return True
-            
+
             # Compute the Orientation based on the offset q
             off = self.imu_offset
             corr_q = transformations.quaternion_multiply([raw[0], raw[1], raw[2], raw[3]], [off.x, off.y, off.z, off.w])
@@ -259,13 +258,13 @@ class IDMindIMU:
             # Datasheet says:
             # - Noise Spectral Density: 0.015dps/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
-            #diag = pow(0.015/np.sqrt(20), 2)
-            #factor = 0.02
-            #imu_msg.angular_velocity_covariance = [
+            # diag = pow(0.015/np.sqrt(20), 2)
+            # factor = 0.02
+            # imu_msg.angular_velocity_covariance = [
             #    diag, w_x*factor, w_x*factor,
             #    w_y*factor, diag, w_y*factor,
             #    w_z*factor, w_z*factor, diag
-            #]
+            # ]
             imu_msg.angular_velocity_covariance = [0.0] * 9
             imu_msg.angular_velocity_covariance[0] = 0.005
             imu_msg.angular_velocity_covariance[4] = 0.005
@@ -276,20 +275,20 @@ class IDMindIMU:
             imu_msg.linear_acceleration.x = acc_x
             imu_msg.linear_acceleration.y = acc_y
             imu_msg.linear_acceleration.z = acc_z
-            #imu_msg.linear_acceleration.x = 0
-            #imu_msg.linear_acceleration.y = 0
-            #imu_msg.linear_acceleration.z = 9.82
-            #imu_msg.linear_acceleration_covariance = [-1] * 9
+            # imu_msg.linear_acceleration.x = 0
+            # imu_msg.linear_acceleration.y = 0
+            # imu_msg.linear_acceleration.z = 9.82
+            # imu_msg.linear_acceleration_covariance = [-1] * 9
             # Datasheet says:
             # - Noise Spectral Density: 230microg/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
-            #diag = pow(230e-6/np.sqrt(20), 2)/256.
-            #factor = 0.02/256.
-            #imu_msg.linear_acceleration_covariance = [
-            #    diag, acc_x*factor, acc_x*factor,
+            # diag = pow(230e-6/np.sqrt(20), 2)/256.
+            # factor = 0.02/256.
+            # imu_msg.linear_acceleration_covariance = [
+            #     diag, acc_x*factor, acc_x*factor,
             #    acc_y*factor, diag, acc_y*factor,
             #    acc_z*factor, acc_z*factor, diag
-            #]
+            # ]
             imu_msg.linear_acceleration_covariance = [0.0] * 9
             imu_msg.linear_acceleration_covariance[0] = 0.005
             imu_msg.linear_acceleration_covariance[4] = 0.005

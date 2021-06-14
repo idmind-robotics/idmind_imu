@@ -1,7 +1,7 @@
 <launch>    
     <arg name="imu" default="artemis" />
     <arg name="tf_prefix" default="" />
-    <arg name="use_filter" default="true" />
+    <arg name="use_filter" default="false" />
     <arg name="target_frame" default="$(arg tf_prefix)imu" />
 
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" >
