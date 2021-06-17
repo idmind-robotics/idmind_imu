@@ -15,7 +15,7 @@ from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
 
-from idmind_msgs.msg import Log
+from idmind_messages.msg import Log
 from idmind_serial2.idmind_serialport import IDMindSerial
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from tf2_geometry_msgs import do_transform_pose, do_transform_vector3

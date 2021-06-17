@@ -1,5 +1,5 @@
 <launch>    
-    <arg name="imu" default="artemis" />
+    <arg name="imu" default="razor" />
     <arg name="tf_prefix" default="" />
     <arg name="use_filter" default="false" />
     <arg name="target_frame" default="$(arg tf_prefix)imu" />
