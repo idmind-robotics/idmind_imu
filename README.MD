@@ -21,11 +21,10 @@ Website: https://www.sparkfun.com/products/16832
 
 Usage:
 1. Download and install Arduino IDE. 
-2. Install ICM-20948 Library (https://github.com/sparkfun/SparkFun_ICM-20948_ArduinoLibrary) - Uncomment line 29 of ICM_20948_C.h to enable DMP - and SparkFun Apollo3 Boards (version 1.2.1, because 2.0 did not work as of Feb2021). Select the "Sparkfun Artemis RedBoard ATP".
-3. Compile and upload one of the sketch alternatives:    
-    1. Compile and Upload Razor_AHRS sketch. The gyro drift is high in presence of magnetic fields. Use imu_filter_madgwick to compensate.
-    2. Compile and Upload OpenLog_Artemis sketch. This does not provide orientation, an external library would be required for integration.
-    3. Compile and Upload idmind_artemis sketch. This provides accurate orientation but no linear accelerations or angular velocities.
+2. Download ICM-20948 Library (https://github.com/sparkfun/SparkFun_ICM-20948_ArduinoLibrary) and copy to Arduino/libraries. Uncomment line 29 of ICM_20948_C.h to enable DMP.
+3. Run ArduinoIDE and install SparkFun Apollo3 Boards. Under "Tools > Board" select the "Sparkfun Artemis RedBoard ATP".
+4. Open, compile and upload OpenLogArtemis.ino.
+5. Test the software by opening the Tools > Serial Monitor and writing "f" to get "IDMind OpenLog Artemis" and "r" to receive one reading.
 
 ##### SparkFun 9DoF Razor IMU M0 - razor
 Website: https://www.sparkfun.com/products/14001
