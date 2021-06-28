@@ -104,8 +104,8 @@ class IDMindIMU:
         self.tf_buffer = tf2_ros.Buffer()
         self.transform_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.imu_pub = rospy.Publisher("{}/imu".format(rospy.get_name()), Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("{}/euler_string".format(rospy.get_name()), String, queue_size=10)
+        self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
 
     def connection(self):
         """
