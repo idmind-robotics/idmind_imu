@@ -228,7 +228,6 @@ class IDMindIMU:
             imu_msg.header.frame_id = self.tf_prefix+"imu"
             imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
-            
             if ((q1 * q1) + (q2 * q2) + (q3 * q3)) < 1:
                 raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
             else:
@@ -247,9 +246,9 @@ class IDMindIMU:
 
             # Set the sensor covariances
             imu_msg.orientation_covariance = [
-                0.01, 0, 0,
-                0, 0.01, 0,
-                0, 0, 0.01
+                0.0001, 0, 0,
+                0, 0.0001, 0,
+                0, 0, 0.0001
             ]
 
             # Angular Velocity
@@ -267,9 +266,9 @@ class IDMindIMU:
             #    w_z*factor, w_z*factor, diag
             #]
             imu_msg.angular_velocity_covariance = [0.0] * 9
-            imu_msg.angular_velocity_covariance[0] = 0.005
-            imu_msg.angular_velocity_covariance[4] = 0.005
-            imu_msg.angular_velocity_covariance[8] = 0.005
+            imu_msg.angular_velocity_covariance[0] = 0.0001
+            imu_msg.angular_velocity_covariance[4] = 0.0001
+            imu_msg.angular_velocity_covariance[8] = 0.0001
             # imu_msg.angular_velocity_covariance = [-1] * 9
 
             # Linear Acceleration
@@ -291,9 +290,9 @@ class IDMindIMU:
             #    acc_z*factor, acc_z*factor, diag
             #]
             imu_msg.linear_acceleration_covariance = [0.0] * 9
-            imu_msg.linear_acceleration_covariance[0] = 0.005
-            imu_msg.linear_acceleration_covariance[4] = 0.005
-            imu_msg.linear_acceleration_covariance[8] = 0.005
+            imu_msg.linear_acceleration_covariance[0] = 0.001
+            imu_msg.linear_acceleration_covariance[4] = 0.001
+            imu_msg.linear_acceleration_covariance[8] = 0.001
 
             # Transform IMU message to another frame
             transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)
