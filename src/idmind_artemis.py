@@ -1,20 +1,16 @@
 #!/usr/bin/env python
 
-import sys
-import copy
 import numpy as np
 import subprocess
 import serial.tools.list_ports
 from serial import SerialException
 
 import rospy
-import tf2_ros
 from std_msgs.msg import String
 from sensor_msgs.msg import Imu
-from geometry_msgs.msg import Vector3Stamped, PoseStamped, TransformStamped, QuaternionStamped, Quaternion
+from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
-from tf2_geometry_msgs import do_transform_pose, do_transform_vector3
 
 from idmind_serial2.idmind_serialport import IDMindSerial
 from idmind_msgs.msg import Log
@@ -23,54 +19,6 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
 VERBOSE = 5
 LOGS = 5
-
-
-def do_transform_quaternion(quaternion_msg, transform):
-    # Use PoseStamped to transform the Quaternion
-    src_ps = PoseStamped()
-    src_ps.header = quaternion_msg.header
-    src_ps.pose.orientation = quaternion_msg.quaternion
-    tgt_ps = do_transform_pose(src_ps, transform)
-    tgt_o = QuaternionStamped()
-    tgt_o.header = tgt_ps.header
-    tgt_o.quaternion = tgt_ps.pose.orientation
-    return tgt_o
-
-
-def do_transform_imu(imu_msg, transform):
-    """
-    Transforms the given Imu message into the given target frame
-    :param imu_msg:
-    :type imu_msg: Imu
-    :param transform:
-    :type transform: TransformStamped
-    :return: Imu message transformed into the target frame
-    :rtype: Imu
-    """
-    src_l = Vector3Stamped()
-    src_l.header = imu_msg.header
-    src_l.vector = imu_msg.linear_acceleration
-    src_a = Vector3Stamped()
-    src_a.header = imu_msg.header
-    src_a.vector = imu_msg.angular_velocity
-    src_o = QuaternionStamped()
-    src_o.header = imu_msg.header
-    src_o.quaternion = imu_msg.orientation
-
-    tgt_l = do_transform_vector3(src_l, transform)
-    tgt_a = do_transform_vector3(src_a, transform)
-    tgt_o = do_transform_quaternion(src_o, transform)
-
-    tgt_imu = copy.deepcopy(imu_msg)
-    tgt_imu.header.frame_id = transform.child_frame_id
-    tgt_imu.linear_acceleration = tgt_l.vector
-    tgt_imu.angular_velocity = tgt_a.vector
-    tgt_imu.orientation = tgt_o.quaternion
-    return tgt_imu
-
-
-tf2_ros.TransformRegistration().add(Imu, do_transform_quaternion)
-tf2_ros.TransformRegistration().add(Imu, do_transform_imu)
 
 
 class IDMindIMU:
@@ -83,6 +31,8 @@ class IDMindIMU:
     TODO: Allow for calibration of components
     """
     def __init__(self):
+        self.ready = False
+        rospy.Service("~ready", Trigger, self.report_ready)
         # Logging
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
@@ -92,20 +42,24 @@ class IDMindIMU:
         self.last_imu = Imu()
         self.imu_reading = Imu()
         self.calibration = True
-        self.imu_offset = Quaternion()
-        self.imu_offset.w = -1
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
-        self.target_frame = rospy.get_param("~target_frame", "imu")
 
         # Connect to IMU
         self.ser = None
         self.connection()
 
-        self.tf_buffer = tf2_ros.Buffer()
-        self.transform_listener = tf2_ros.TransformListener(self.tf_buffer)
-
         self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
         self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
+
+        self.ready = True
+
+    ###############
+    #  CALLBACKS  #
+    ###############
+    def report_ready(self, _req):
+        """ Simple Service callback to show node is ready """
+        self.log("Replying to 'ready' request", 7)
+        return TriggerResponse(self.ready, rospy.get_name()+" is " + ("ready" if self.ready else "not ready"))
 
     def connection(self):
         """
@@ -229,19 +183,17 @@ class IDMindIMU:
             imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
 
             if ((q1 * q1) + (q2 * q2) + (q3 * q3)) < 1:
-                raw = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
+                q4 = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
             else:
                 self.log("Inconsistent readings from IMU", 2, alert="warn")
                 return True
 
-            # Compute the Orientation based on the offset q
-            off = self.imu_offset
-            corr_q = transformations.quaternion_multiply([raw[0], raw[1], raw[2], raw[3]], [off.x, off.y, off.z, off.w])
+            # Compute the Orientation Quaternion
             new_q = Quaternion()
-            new_q.x = corr_q[0]
-            new_q.y = corr_q[1]
-            new_q.z = corr_q[2]
-            new_q.w = corr_q[3]
+            new_q.x = q1
+            new_q.y = q2
+            new_q.z = q3
+            new_q.w = q4
             imu_msg.orientation = new_q
 
             # Set the sensor covariances
@@ -294,9 +246,6 @@ class IDMindIMU:
             imu_msg.linear_acceleration_covariance[4] = 0.001
             imu_msg.linear_acceleration_covariance[8] = 0.001
 
-            # Transform IMU message to another frame
-            transf = self.get_transform(self.target_frame, imu_msg.header.frame_id)
-            imu_msg = do_transform_imu(imu_msg, transf)
             # Message publishing
             self.imu_pub.publish(imu_msg)
             new_q = imu_msg.orientation
@@ -311,15 +260,6 @@ class IDMindIMU:
         except Exception as imu_exc:
             self.log(imu_exc, 3)
             raise imu_exc
-
-    def get_transform(self, source="imu", target="imu"):
-        """ Returns the transform between two frames """
-        try:
-            transformation = self.tf_buffer.lookup_transform(target, source, rospy.Duration(0))
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            self.log('Unable to find the transformation from {} to {}'.format(source, target), 2, alert="error")
-            transformation = TransformStamped()
-        return transformation
 
     def calibrate_imu(self):
         """
@@ -339,10 +279,6 @@ class IDMindIMU:
                     self.get_imu_data()
                     [q1, q2, q3, accuracy, roll, pitch, yaw, w_x, w_y, w_z, acc_x, acc_y, acc_z] = self.parse_msg()
                     q = [q1, q2, q3, np.sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)))]
-                    # self.imu_offset.x = q[0]
-                    # self.imu_offset.y = q[1]
-                    # self.imu_offset.z = q[2]
-                    # self.imu_offset.w = -q[3]
                     calibrated = True
                     self.calibration = False
                 else:
