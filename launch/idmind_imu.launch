@@ -5,7 +5,6 @@
 
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" respawn="true">
         <param name="tf_prefix" value="$(arg tf_prefix)" />        
-        <rosparam file="$(find idmind_imu)/cfg/idmind_imu.yaml" command="load" />        
     </node>
     
     <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter" output="screen" if="$(arg use_filter)">
