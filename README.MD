@@ -7,7 +7,7 @@ This package contains the nodes responsible for communication with IMU devices a
 1. Clone the repository into `<catkin_ws>/src`
 2. Clone the `idmind_serial2` package
 3. Run `catkin_make`
-4. Test the device running `rosrun idmind_imu idmind_<imu_code>.py` or `roslaunch idmind_imu idmind_imu.launch imu:=<imu_code`
+4. Test the device running `rosrun idmind_imu idmind_<imu_code>.py` or `roslaunch idmind_imu idmind_imu.launch imu:=<imu_code>`
 5. Use it in your launch files adding
 
 
@@ -19,17 +19,20 @@ This package contains the nodes responsible for communication with IMU devices a
 ##### SparkFun OpenLog_Artemis (with ICM-20948 IMU)
 Website: https://www.sparkfun.com/products/16832
 
+NOTE: Due to some incompatibility, the firmware developed by IDMind does not work for new flashes. Please update.
+
 Usage:
-1. Download and install Arduino IDE. 
-2. Download ICM-20948 Library (https://github.com/sparkfun/SparkFun_ICM-20948_ArduinoLibrary) and copy to Arduino/libraries. Uncomment line 29 of ICM_20948_C.h to enable DMP.
-3. Run ArduinoIDE and install SparkFun Apollo3 Boards. Under "Tools > Board" select the "Sparkfun Artemis RedBoard ATP".
-4. Open, compile and upload OpenLogArtemis.ino.
-5. Test the software by opening the Tools > Serial Monitor and writing "f" to get "IDMind OpenLog Artemis" and "r" to receive one reading.
+1. Run Firmware Uploader (python3 firmwares/OpenLogArtemis/Artemis-Firmware-Upload-GUI/tools/artemis_firmware_uploader_gui.py) and choose firmwares/OpenLogArtemis/OpenLog_Artemis-V10-v20.bin
+3. Use Serial Monitor from ArduinoIDE (or another serial communication program) to configure device:
+3.1. Send any character to enter menu
+3.2. Send '3' to enter "Configure IMU Logging", '12' to Enable DMP. '15' to enable Accelerometer, '16' to enable Gyroscope and '17' for Compass.
+3.3. Wait or choose 'x' to leave menu.
+4. When running the node, choose <imu_code> = "artemisv2". If an error appears, rebooting once seems to solve the issue.
 
 ##### SparkFun 9DoF Razor IMU M0 - razor
 Website: https://www.sparkfun.com/products/14001
 
-Usage: Upload idmind_imu_stream.ino to device
+Usage: Upload firmwares/razor/idmind_imu_stream.ino to device
 
 ##### SparkFun MPU6050 on IDMindBoard - mpu6050
 Website: https://www.sparkfun.com/products/11028

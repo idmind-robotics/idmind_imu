@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import copy
 import numpy as np
 from serial import SerialException
 
@@ -51,6 +50,7 @@ class IDMindIMU:
         self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
 
         self.ready = True
+        self.log("Node is ready", 4)
 
     ###############
     #  CALLBACKS  #
@@ -67,9 +67,10 @@ class IDMindIMU:
         """
         connected = False
         while not connected and not rospy.is_shutdown():
-            self.log("Searching for IMU", 5)
+            self.log("Searching for IMU", 4)
             try:
                 self.ser = IDMindSerial("/dev/idmind-artemis", baudrate=115200, timeout=0.5)
+                self.log("OpenLog Artemis found.", 4)
                 connected = True
             except SerialException as err:
                 if err.errno == 2:
@@ -108,7 +109,7 @@ class IDMindIMU:
             This method will wait for the IMU to output values and wait for the values to get steady
             :return:
         """
-        self.log("Calibrating IMU", 3)
+        self.log("Calibrating IMU", 5)
         r = rospy.Rate(20)
         activated = False
         calibrated = False
@@ -117,9 +118,8 @@ class IDMindIMU:
         while not activated and not rospy.is_shutdown():
             try:
                 data = self.ser.readline()
-                self.log("Length: {}".format(len(data.split(","))), 2, alert="warn")
                 if len(data.split(",")) == 16:
-                    self.log("IMU is outputting values", 5)
+                    self.log("IMU is outputting values", 7)
                     activated = True
                 else:
                     reads = reads + 1
@@ -179,7 +179,7 @@ class IDMindIMU:
         q = [float(data[2]), float(data[3]), float(data[4]), 0]
         if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
             self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
-            self.log("Inconsistent IMU readings", 2, alert="warn")
+            self.log("Inconsistent IMU readings", 4, alert="warn")
             return
         q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
 
@@ -285,7 +285,7 @@ class IDMindIMU:
                 self.publish_diagnostic(0, "OK")
                 r.sleep()
             except KeyboardInterrupt:
-                self.log("{}: Shutting down by user".format(rospy.get_name()), 2)
+                self.log("Shutting down by user", 2)
                 break
             except IOError as io_exc:
                 self.publish_diagnostic(1, "Lost connection to IMU")
