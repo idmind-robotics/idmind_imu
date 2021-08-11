@@ -305,9 +305,9 @@ class IDMindIMU:
                 imu_msg.orientation.y = q[1]
                 imu_msg.orientation.z = q[2]
                 imu_msg.orientation.w = q[3]
-                imu_msg.linear_acceleration.x = a[0]
-                imu_msg.linear_acceleration.y = a[1]
-                imu_msg.linear_acceleration.z = a[2]
+                imu_msg.linear_acceleration.x = a[0]*9.82
+                imu_msg.linear_acceleration.y = a[1]*9.82
+                imu_msg.linear_acceleration.z = a[2]*9.82
                 imu_msg.angular_velocity.x = w[0]
                 imu_msg.angular_velocity.y = w[1]
                 imu_msg.angular_velocity.z = w[2]
