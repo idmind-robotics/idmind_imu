@@ -4,7 +4,7 @@ import rospy
 from numpy import pi
 from threading import Lock
 from sensor_msgs.msg import Imu
-from idmind_raposa.msg import Log
+from idmind_messages.msg import Log
 from serial import SerialException
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations

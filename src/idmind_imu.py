@@ -2,7 +2,7 @@
 import rospy
 import collections
 import numpy as np
-from idmind_msgs.msg import Log
+from idmind_messages.msg import Log
 from sensor_msgs.msg import Imu
 from std_msgs.msg import String
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
