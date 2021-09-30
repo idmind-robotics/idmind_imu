@@ -178,9 +178,14 @@ class IDMindIMU:
         # Compute Absolute Quaternion
         q = [float(data[2]), float(data[3]), float(data[4]), 0]
         if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
-            self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
             self.log("Inconsistent IMU readings", 4, alert="warn")
-            return
+            #self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")            
+            #return
+            q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
+            q[0] = q[0]/q_norm
+            q[1] = q[1]/q_norm
+            q[2] = q[2]/q_norm
+
         q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
 
         new_q = Quaternion()
