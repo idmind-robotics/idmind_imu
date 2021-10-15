@@ -175,6 +175,10 @@ class IDMindIMU:
         else:
             self.fails = 0
 
+        if len(data) < 16:
+            self.log("IMU Communication failed", 4, alert="warn")
+            return
+            
         # Compute Absolute Quaternion
         q = [float(data[2]), float(data[3]), float(data[4]), 0]
         if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
