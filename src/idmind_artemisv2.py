@@ -15,8 +15,14 @@ from idmind_msgs.msg import Log
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
+# TESTING RESTARTING PORT
+import os
+import fcntl
+import subprocess
+
 VERBOSE = 7
 LOGS = 7
+USBDEVFS_RESET = ord('U') << (4*2) | 20
 
 
 class IDMindIMU:
@@ -73,10 +79,19 @@ class IDMindIMU:
                 self.log("OpenLog Artemis found.", 4)
                 connected = True
             except SerialException as err:
+                
                 if err.errno == 2:
                     self.log("Openlog Artemis IMU not found", 2, alert="warn")
                     rospy.sleep(1)
-                else:
+                elif "Inappropriate ioctl" in str(err):
+                    self.log("Restarting USB port", 2, alert="error")
+                    fd = os.open("/dev/idmind-artemis", os.O_WRONLY)
+                    try:
+                        fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                    finally:
+                        os.close(fd)
+                    rospy.sleep(1)
+                else:                                        
                     self.log("Exception connecting to IMU: {}".format(err), 2, alert="warn")
                     rospy.sleep(1)
 
@@ -171,7 +186,7 @@ class IDMindIMU:
             self.fails = self.fails + 1
             if self.fails > 10:
                 self.connection()
-                return
+            return
         else:
             self.fails = 0
 
@@ -180,17 +195,21 @@ class IDMindIMU:
             return
             
         # Compute Absolute Quaternion
-        q = [float(data[2]), float(data[3]), float(data[4]), 0]
-        if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
-            self.log("Inconsistent IMU readings", 4, alert="warn")
-            #self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")            
-            #return
-            q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
-            q[0] = q[0]/q_norm
-            q[1] = q[1]/q_norm
-            q[2] = q[2]/q_norm
+        try:
+            q = [float(data[2]), float(data[3]), float(data[4]), 0]
+            if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
+                self.log("Inconsistent IMU readings", 4, alert="warn")
+                #self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")            
+                #return
+                q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
+                q[0] = q[0]/q_norm
+                q[1] = q[1]/q_norm
+                q[2] = q[2]/q_norm
 
-        q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
+            q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
+        except ValueError:
+            self.log("Error converting IMU message", 5, alert="warn")
+            return
 
         new_q = Quaternion()
         new_q.x = q[0]
@@ -213,17 +232,17 @@ class IDMindIMU:
         imu_msg.header.frame_id = self.tf_prefix+"imu"
         imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
         imu_msg.orientation = new_q
-        # Set the sensor covariances
+        # Set the sensor covariances        
         imu_msg.orientation_covariance = [
-            0.0001, 0, 0,
-            0, 0.0001, 0,
-            0, 0, 0.0001
+           0.01, 0, 0,
+           0, 0.01, 0,
+           0, 0, 0.01
         ]
 
         # Angular Velocity
-        imu_msg.angular_velocity.x = w_x
-        imu_msg.angular_velocity.y = w_y
-        imu_msg.angular_velocity.z = w_z
+        # imu_msg.angular_velocity.x = w_x
+        # imu_msg.angular_velocity.y = w_y
+        # imu_msg.angular_velocity.z = w_z
         # Datasheet says:
         # - Noise Spectral Density: 0.015dps/sqrt(Hz)
         # - Cross Axis Sensitivy: +-2%
@@ -233,11 +252,12 @@ class IDMindIMU:
         #    diag, w_x*factor, w_x*factor,
         #    w_y*factor, diag, w_y*factor,
         #    w_z*factor, w_z*factor, diag
-        # ]
+        # ]        
         imu_msg.angular_velocity_covariance = [0.0] * 9
-        imu_msg.angular_velocity_covariance[0] = 0.0001
-        imu_msg.angular_velocity_covariance[4] = 0.0001
-        imu_msg.angular_velocity_covariance[8] = 0.0001
+        imu_msg.angular_velocity_covariance[0] = -1
+        #imu_msg.angular_velocity_covariance[0] = 0.001
+        #imu_msg.angular_velocity_covariance[4] = 0.001
+        #imu_msg.angular_velocity_covariance[8] = 0.001
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
@@ -259,9 +279,9 @@ class IDMindIMU:
         #    acc_z*factor, acc_z*factor, diag
         # ]
         imu_msg.linear_acceleration_covariance = [0.0] * 9
-        imu_msg.linear_acceleration_covariance[0] = 0.001
-        imu_msg.linear_acceleration_covariance[4] = 0.001
-        imu_msg.linear_acceleration_covariance[8] = 0.001
+        imu_msg.linear_acceleration_covariance[0] = 0.01
+        imu_msg.linear_acceleration_covariance[4] = 0.01
+        imu_msg.linear_acceleration_covariance[8] = 0.01
 
         # Message publishing
         self.imu_pub.publish(imu_msg)
