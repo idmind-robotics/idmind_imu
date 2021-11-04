@@ -23,7 +23,7 @@ import fcntl
 VERBOSE = 7
 LOGS = 7
 USBDEVFS_RESET = ord('U') << (4*2) | 20
-epoch = datetime(year=1970, month=1, year=1)
+epoch = datetime(year=1970, month=1, day=1)
 
 class IDMindArtemisHub:
     """
