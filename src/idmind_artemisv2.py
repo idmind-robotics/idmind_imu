@@ -18,7 +18,6 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 # TESTING RESTARTING PORT
 import os
 import fcntl
-import subprocess
 
 VERBOSE = 7
 LOGS = 7
@@ -39,8 +38,7 @@ class IDMindIMU:
         self.ready = False
         rospy.Service("~ready", Trigger, self.report_ready)
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
-        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
-        self.val_exc = 0
+        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)        
 
         self.imu_data = ""
         self.imu_reading = Imu()
