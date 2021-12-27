@@ -13,6 +13,7 @@
   <!-- ROS Packages -->
   <depend>rospy</depend>
   <depend>sensor_msgs</depend>
+  <depend>imu_filter_madgwick</depend>
   <!-- IDMind packages -->
   <depend>idmind_serial2</depend>
 

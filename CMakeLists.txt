@@ -10,6 +10,7 @@ project(idmind_imu)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   idmind_serial2
+  imu_filter_madgwick
 )
 
 ## System dependencies are found with CMake's conventions

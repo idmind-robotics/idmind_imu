@@ -17,8 +17,8 @@ from idmind_msgs.msg import Log
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
-VERBOSE = 5
-LOGS = 5
+VERBOSE = 4
+LOGS = 4
 
 
 class IDMindIMU:
