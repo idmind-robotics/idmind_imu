@@ -19,8 +19,8 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 import os
 import fcntl
 
-VERBOSE = 7
-LOGS = 7
+VERBOSE = 5
+LOGS = 5
 USBDEVFS_RESET = ord('U') << (4*2) | 20
 
 
@@ -38,11 +38,12 @@ class IDMindIMU:
         self.ready = False
         rospy.Service("~ready", Trigger, self.report_ready)
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
-        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)        
+        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
 
         self.imu_data = ""
-        self.imu_reading = Imu()
         self.calibration = True
+        self.last_imu = Imu()
+        self.acc_ratio = 1.0
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
 
         # Connect to IMU
@@ -77,7 +78,6 @@ class IDMindIMU:
                 self.log("OpenLog Artemis found.", 4)
                 connected = True
             except SerialException as err:
-                
                 if err.errno == 2:
                     self.log("Openlog Artemis IMU not found", 2, alert="warn")
                     rospy.sleep(1)
@@ -89,7 +89,7 @@ class IDMindIMU:
                     finally:
                         os.close(fd)
                     rospy.sleep(1)
-                else:                                        
+                else:
                     self.log("Exception connecting to IMU: {}".format(err), 2, alert="warn")
                     rospy.sleep(1)
 
@@ -163,6 +163,10 @@ class IDMindIMU:
                 deriv = (th_hist[2]-th_hist[1]) - (th_hist[1]-th_hist[0])
                 if reads > 50 and abs(deriv) < 1e-6:
                     self.log("IMU is calibrated.", 5)
+                    acc_x = float(data[5])
+                    acc_y = float(data[6])
+                    acc_z = float(data[7])
+                    self.acc_ratio = 9.82/np.linalg.norm([acc_x, acc_y, acc_z])
                     calibrated = True
                 else:
                     self.log("IMU is calibrating.", 7)
@@ -191,14 +195,14 @@ class IDMindIMU:
         if len(data) < 16:
             self.log("IMU Communication failed", 4, alert="warn")
             return
-            
+
         # Compute Absolute Quaternion
         try:
             q = [float(data[2]), float(data[3]), float(data[4]), 0]
             if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
                 self.log("Inconsistent IMU readings", 4, alert="warn")
-                #self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")            
-                #return
+                # self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
+                # return
                 q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
                 q[0] = q[0]/q_norm
                 q[1] = q[1]/q_norm
@@ -216,21 +220,30 @@ class IDMindIMU:
         new_q.w = q[3]
 
         # Compute Linear Acceleration
-        acc_x = float(data[5])/1000
-        acc_y = float(data[6])/1000
-        acc_z = float(data[7])/1000
+        acc_x = float(data[5])*self.acc_ratio
+        acc_y = float(data[6])*self.acc_ratio
+        acc_z = float(data[7])*self.acc_ratio
 
         # Compute Angular Velocity
-        w_x = float(data[8])
-        w_y = float(data[9])
-        w_z = float(data[10])
+        # w_x = float(data[8])*3.14/180
+        # w_y = float(data[9])*3.14/180
+        # w_z = float(data[10])*3.14/180
+        # Compute Angular Velocity from Quat6
+        lq = self.last_imu.orientation
+        euler1 = transformations.euler_from_quaternion([lq.x, lq.y, lq.z, lq.w])
+        euler2 = transformations.euler_from_quaternion(q)
+        curr_time = rospy.Time.now()
+        dt = (curr_time - self.last_imu.header.stamp).to_sec()
+        w_x = (euler2[0] - euler1[0])/dt
+        w_y = (euler2[1] - euler1[1])/dt
+        w_z = (euler2[2] - euler1[2])/dt
 
         # Compute IMU Msg
         imu_msg = Imu()
         imu_msg.header.frame_id = self.tf_prefix+"imu"
-        imu_msg.header.stamp = rospy.Time.now()  # + rospy.Duration(0.5)
+        imu_msg.header.stamp = curr_time
         imu_msg.orientation = new_q
-        # Set the sensor covariances        
+        # Set the sensor covariances
         imu_msg.orientation_covariance = [
            0.01, 0, 0,
            0, 0.01, 0,
@@ -238,9 +251,9 @@ class IDMindIMU:
         ]
 
         # Angular Velocity
-        # imu_msg.angular_velocity.x = w_x
-        # imu_msg.angular_velocity.y = w_y
-        # imu_msg.angular_velocity.z = w_z
+        imu_msg.angular_velocity.x = w_x
+        imu_msg.angular_velocity.y = w_y
+        imu_msg.angular_velocity.z = w_z
         # Datasheet says:
         # - Noise Spectral Density: 0.015dps/sqrt(Hz)
         # - Cross Axis Sensitivy: +-2%
@@ -250,12 +263,12 @@ class IDMindIMU:
         #    diag, w_x*factor, w_x*factor,
         #    w_y*factor, diag, w_y*factor,
         #    w_z*factor, w_z*factor, diag
-        # ]        
+        # ]
         imu_msg.angular_velocity_covariance = [0.0] * 9
         imu_msg.angular_velocity_covariance[0] = -1
-        #imu_msg.angular_velocity_covariance[0] = 0.001
-        #imu_msg.angular_velocity_covariance[4] = 0.001
-        #imu_msg.angular_velocity_covariance[8] = 0.001
+        imu_msg.angular_velocity_covariance[0] = 0.01
+        imu_msg.angular_velocity_covariance[4] = 0.01
+        imu_msg.angular_velocity_covariance[8] = 0.01
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
@@ -286,6 +299,7 @@ class IDMindIMU:
         new_q = imu_msg.orientation
         [r, p, y] = transformations.euler_from_quaternion([new_q.x, new_q.y, new_q.z, new_q.w])
         self.imu_euler_pub.publish("Roll: {} | Pitch: {} | Yaw: {}".format(r, p, y))
+        self.last_imu = imu_msg
 
     def publish_diagnostic(self, level, message):
         """ Auxiliary method to publish Diagnostic messages """
