@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import numpy as np
+from scipy.signal import butter, lfilter, freqz
 from serial import SerialException
 
 import rospy
@@ -24,6 +25,18 @@ LOGS = 5
 USBDEVFS_RESET = ord('U') << (4*2) | 20
 
 
+# Butterwoth Low pass filter for linear acceleration
+def butter_lowpass(cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return b, a
+
+def butter_lowpass_filter(data, cutoff, fs, order=5):
+    b, a = butter_lowpass(cutoff, fs, order=order)
+    y = lfilter(b, a, data)
+    return y
+
 class IDMindIMU:
     """
     This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
@@ -42,7 +55,8 @@ class IDMindIMU:
 
         self.imu_data = ""
         self.calibration = True
-        self.last_imu = Imu()
+        self.last_imu = [Imu()]*10
+        self.acc_hist = [[0,0,9.82]]*100
         self.acc_ratio = 1.0
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
 
@@ -220,23 +234,23 @@ class IDMindIMU:
         new_q.w = q[3]
 
         # Compute Linear Acceleration
-        acc_x = float(data[5])*self.acc_ratio
-        acc_y = float(data[6])*self.acc_ratio
-        acc_z = float(data[7])*self.acc_ratio
+        acc = [round(float(data[5])*self.acc_ratio, 3), round(float(data[6])*self.acc_ratio, 3), round(float(data[7])*self.acc_ratio, 3)]
+        self.acc_hist.pop(0)
+        self.acc_hist.append(acc)
 
         # Compute Angular Velocity
         # w_x = float(data[8])*3.14/180
         # w_y = float(data[9])*3.14/180
         # w_z = float(data[10])*3.14/180
         # Compute Angular Velocity from Quat6
-        lq = self.last_imu.orientation
+        lq = self.last_imu[-1].orientation
         euler1 = transformations.euler_from_quaternion([lq.x, lq.y, lq.z, lq.w])
         euler2 = transformations.euler_from_quaternion(q)
         curr_time = rospy.Time.now()
-        dt = (curr_time - self.last_imu.header.stamp).to_sec()
-        w_x = (euler2[0] - euler1[0])/dt
-        w_y = (euler2[1] - euler1[1])/dt
-        w_z = (euler2[2] - euler1[2])/dt
+        dt = (curr_time - self.last_imu[-1].header.stamp).to_sec()
+        w_x = round((euler2[0] - euler1[0])/dt, 4)
+        w_y = round((euler2[1] - euler1[1])/dt, 4)
+        w_z = round((euler2[2] - euler1[2])/dt, 4)
 
         # Compute IMU Msg
         imu_msg = Imu()
@@ -245,9 +259,9 @@ class IDMindIMU:
         imu_msg.orientation = new_q
         # Set the sensor covariances
         imu_msg.orientation_covariance = [
-           0.01, 0, 0,
-           0, 0.01, 0,
-           0, 0, 0.01
+           0.001, 0, 0,
+           0, 0.001, 0,
+           0, 0, 0.001
         ]
 
         # Angular Velocity
@@ -268,13 +282,19 @@ class IDMindIMU:
         imu_msg.angular_velocity_covariance[0] = -1
         imu_msg.angular_velocity_covariance[0] = 0.01
         imu_msg.angular_velocity_covariance[4] = 0.01
-        imu_msg.angular_velocity_covariance[8] = 0.01
+        imu_msg.angular_velocity_covariance[8] = 0.05
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
-        imu_msg.linear_acceleration.x = acc_x
-        imu_msg.linear_acceleration.y = acc_y
-        imu_msg.linear_acceleration.z = acc_z
+        acc = [0, 0, 0]
+        print("Filter Data")
+        for idx in range(0, 3):
+            data = [a[idx] for a in self.acc_hist]
+            res = butter_lowpass_filter(data, cutoff=5.0, fs=15.0, order=6)            
+            acc[idx] = res[-1]
+        imu_msg.linear_acceleration.x = acc[0]
+        imu_msg.linear_acceleration.y = acc[1]
+        imu_msg.linear_acceleration.z = acc[2]
         # imu_msg.linear_acceleration.x = 0
         # imu_msg.linear_acceleration.y = 0
         # imu_msg.linear_acceleration.z = 9.82
@@ -292,14 +312,15 @@ class IDMindIMU:
         imu_msg.linear_acceleration_covariance = [0.0] * 9
         imu_msg.linear_acceleration_covariance[0] = 0.01
         imu_msg.linear_acceleration_covariance[4] = 0.01
-        imu_msg.linear_acceleration_covariance[8] = 0.01
+        imu_msg.linear_acceleration_covariance[8] = 0.05
 
         # Message publishing
         self.imu_pub.publish(imu_msg)
         new_q = imu_msg.orientation
         [r, p, y] = transformations.euler_from_quaternion([new_q.x, new_q.y, new_q.z, new_q.w])
         self.imu_euler_pub.publish("Roll: {} | Pitch: {} | Yaw: {}".format(r, p, y))
-        self.last_imu = imu_msg
+        self.last_imu.pop(0)
+        self.last_imu.append(imu_msg)
 
     def publish_diagnostic(self, level, message):
         """ Auxiliary method to publish Diagnostic messages """

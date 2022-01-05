@@ -204,9 +204,9 @@ class IDMindIMU:
             ]
 
             # Angular Velocity
-            imu_msg.angular_velocity.x = w_x
-            imu_msg.angular_velocity.y = w_y
-            imu_msg.angular_velocity.z = w_z
+            imu_msg.angular_velocity.x = round(w_x, 4)
+            imu_msg.angular_velocity.y = round(w_y, 4)
+            imu_msg.angular_velocity.z = round(w_z, 4)
             # Datasheet says:
             # - Noise Spectral Density: 0.015dps/sqrt(Hz)
             # - Cross Axis Sensitivy: +-2%
@@ -224,9 +224,9 @@ class IDMindIMU:
             # imu_msg.angular_velocity_covariance = [-1] * 9
 
             # Linear Acceleration
-            imu_msg.linear_acceleration.x = acc_x
-            imu_msg.linear_acceleration.y = acc_y
-            imu_msg.linear_acceleration.z = acc_z
+            imu_msg.linear_acceleration.x = round(acc_x, 4)
+            imu_msg.linear_acceleration.y = round(acc_y, 4)
+            imu_msg.linear_acceleration.z = round(acc_z, 4)
             # imu_msg.linear_acceleration.x = 0
             # imu_msg.linear_acceleration.y = 0
             # imu_msg.linear_acceleration.z = 9.82
