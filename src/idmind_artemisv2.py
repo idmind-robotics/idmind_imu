@@ -216,15 +216,15 @@ class IDMindIMU:
             if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
                 self.log("Inconsistent IMU readings", 4, alert="warn")
                 # self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
-                # return
-                q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
-                q[0] = q[0]/q_norm
-                q[1] = q[1]/q_norm
-                q[2] = q[2]/q_norm
+                return
+                #q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
+                #q[0] = q[0]/q_norm
+                #q[1] = q[1]/q_norm
+                #q[2] = q[2]/q_norm
 
             q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
         except ValueError:
-            self.log("Error converting IMU message", 5, alert="warn")
+            self.log("Error converting IMU message - {}".format(data), 5, alert="warn")
             return
 
         new_q = Quaternion()
@@ -286,11 +286,10 @@ class IDMindIMU:
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
-        acc = [0, 0, 0]
-        print("Filter Data")
+        acc = [0, 0, 0]        
         for idx in range(0, 3):
             data = [a[idx] for a in self.acc_hist]
-            res = butter_lowpass_filter(data, cutoff=5.0, fs=15.0, order=6)            
+            res = butter_lowpass_filter(data, cutoff=0.5, fs=10.0, order=1)
             acc[idx] = res[-1]
         imu_msg.linear_acceleration.x = acc[0]
         imu_msg.linear_acceleration.y = acc[1]
