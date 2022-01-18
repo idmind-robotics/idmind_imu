@@ -248,9 +248,12 @@ class IDMindIMU:
         euler2 = transformations.euler_from_quaternion(q)
         curr_time = rospy.Time.now()
         dt = (curr_time - self.last_imu[-1].header.stamp).to_sec()
-        w_x = round((euler2[0] - euler1[0])/dt, 4)
-        w_y = round((euler2[1] - euler1[1])/dt, 4)
-        w_z = round((euler2[2] - euler1[2])/dt, 4)
+        w = []
+        for i in range(0, 3):
+            dth = euler2[i] - euler1[i]
+            while 3.14 < dth < -3.14:
+                dth = dth + np.sign(dth)*2*np.pi
+            w.append(round(dth/dt, 4))
 
         # Compute IMU Msg
         imu_msg = Imu()
@@ -265,9 +268,9 @@ class IDMindIMU:
         ]
 
         # Angular Velocity
-        imu_msg.angular_velocity.x = w_x
-        imu_msg.angular_velocity.y = w_y
-        imu_msg.angular_velocity.z = w_z
+        imu_msg.angular_velocity.x = w[0]
+        imu_msg.angular_velocity.y = w[1]
+        imu_msg.angular_velocity.z = w[2]
         # Datasheet says:
         # - Noise Spectral Density: 0.015dps/sqrt(Hz)
         # - Cross Axis Sensitivy: +-2%
