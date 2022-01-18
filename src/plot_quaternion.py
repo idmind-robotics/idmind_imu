@@ -23,7 +23,10 @@ class QuaternionPlotter:
         for i in range(0, 4):
             self.lines[i] = Line2D(self.tdata, self.qdata[i])
             self.axs[i].add_line(self.lines[i])            
-            self.axs[i].set_ylim(-1.0, 1.0)            
+            if i == 3:
+                self.axs[i].set_ylim(-3.14, 3.14)
+            else:
+                self.axs[i].set_ylim(-1.1, 1.1)
             self.axs[i].set_xlim(0, HIST_SIZE)
 
     def update_imu(self, msg):        
@@ -35,7 +38,7 @@ class QuaternionPlotter:
         q = [imu.orientation.x, imu.orientation.y, imu.orientation.z, imu.orientation.w]
         w = [imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z]
         [roll, pitch, yaw] = trf.euler_from_quaternion(q)
-        yield [w[0], w[1], w[2], yaw]
+        yield [q[2], q[3], w[2], yaw]
 
     def update(self, data):
         # print("Q: {}".format(data))

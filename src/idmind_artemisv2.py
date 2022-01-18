@@ -53,6 +53,7 @@ class IDMindIMU:
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
 
+        self.euler = [0.0]*3
         self.imu_data = ""
         self.calibration = True
         self.last_imu = [Imu()]*10
@@ -193,6 +194,11 @@ class IDMindIMU:
         return True
 
     def compute_imu_msg(self):
+        """
+            This method reads data from the Openlog Artemis output.
+            We receive 3 coord Quaternion, which causes discontinuities in rotation.
+            RPY coords are stored and reused to compute a new quaternion
+        """
         # Get data
         # rtcDate,rtcTime,Q6_1,Q6_2,Q6_3,RawAX,RawAY,RawAZ,RawGX,RawGY,RawGZ,RawMX,RawMY,RawMZ,output_Hz,\r\n
         try:
@@ -215,23 +221,11 @@ class IDMindIMU:
             q = [float(data[2]), float(data[3]), float(data[4]), 0]
             if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
                 self.log("Inconsistent IMU readings", 4, alert="warn")
-                # self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
                 return
-                #q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
-                #q[0] = q[0]/q_norm
-                #q[1] = q[1]/q_norm
-                #q[2] = q[2]/q_norm
-
             q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
         except ValueError:
             self.log("Error converting IMU message - {}".format(data), 5, alert="warn")
             return
-
-        new_q = Quaternion()
-        new_q.x = q[0]
-        new_q.y = q[1]
-        new_q.z = q[2]
-        new_q.w = q[3]
 
         # Compute Linear Acceleration
         acc = [round(float(data[5])*self.acc_ratio, 3), round(float(data[6])*self.acc_ratio, 3), round(float(data[7])*self.acc_ratio, 3)]
@@ -251,9 +245,21 @@ class IDMindIMU:
         w = []
         for i in range(0, 3):
             dth = euler2[i] - euler1[i]
-            while 3.14 < dth < -3.14:
-                dth = dth + np.sign(dth)*2*np.pi
-            w.append(round(dth/dt, 4))
+            # The IMU Quaternion jumps need to be handled
+            while (3.14 < dth) or (dth < -3.14):
+                dth = dth - np.sign(dth)*2*np.pi
+            # Keep euler angles in [-2p and 2pi]
+            self.euler[i] += dth
+            while (2*np.pi < self.euler[i]) or (self.euler[i] < -2*np.pi):
+                self.euler[i] = self.euler[i] - np.sign(self.euler[i])*2*np.pi
+            w.append(round(dth/dt, 4))        
+
+        q_est = transformations.quaternion_from_euler(self.euler[0], self.euler[1], self.euler[2])
+        new_q = Quaternion()
+        new_q.x = q_est[0]        
+        new_q.y = q_est[1]
+        new_q.z = q_est[2]
+        new_q.w = q_est[3]
 
         # Compute IMU Msg
         imu_msg = Imu()
