@@ -5,11 +5,13 @@ from scipy.signal import butter, lfilter, freqz
 from serial import SerialException
 
 import rospy
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
+from idmind_imu.cfg import ImuParamsConfig
+import dynamic_reconfigure.server
 
 from idmind_serial2.idmind_serialport import IDMindSerial
 from idmind_msgs.msg import Log
@@ -32,10 +34,12 @@ def butter_lowpass(cutoff, fs, order=5):
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
     return b, a
 
+
 def butter_lowpass_filter(data, cutoff, fs, order=5):
     b, a = butter_lowpass(cutoff, fs, order=order)
     y = lfilter(b, a, data)
     return y
+
 
 class IDMindIMU:
     """
@@ -57,7 +61,7 @@ class IDMindIMU:
         self.imu_data = ""
         self.calibration = True
         self.last_imu = [Imu()]*10
-        self.acc_hist = [[0,0,9.82]]*100
+        self.acc_hist = [[0, 0, 9.82]] * 100
         self.acc_ratio = 1.0
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
 
@@ -68,6 +72,11 @@ class IDMindIMU:
 
         self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
         self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
+
+        self.imu_rate = rospy.get_param("~imu_rate", 10)
+        self.control_freq = rospy.get_param("~control_freq", 20)
+        self.update_rates = False
+        self.dynamic_server = dynamic_reconfigure.server.Server(ImuParamsConfig, callback=self.update_imu_params)
 
         self.ready = True
         self.log("Node is ready", 4)
@@ -109,6 +118,15 @@ class IDMindIMU:
                     rospy.sleep(1)
 
         return connected
+
+    def update_imu_params(self, config, level):
+        """ Callback to an update in the motor dynamic parameters of the platform """
+        self.control_freq = config.control_freq
+        self.rate = rospy.Rate(self.control_freq)
+        if self.imu_rate != config.imu_freq:
+            self.update_rates = True
+            self.imu_rate = config.imu_freq
+        return config
 
     #########################
     #  AUXILIARY FUNCTIONS  #
@@ -158,7 +176,7 @@ class IDMindIMU:
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
             finally:
-                r.sleep()
+                self.rate.sleep()
 
         # Wait for yaw values to stabilize
         # rtcDate,rtcTime,Q6_1,Q6_2,Q6_3,RawAX,RawAY,RawAZ,RawGX,RawGY,RawGZ,RawMX,RawMY,RawMZ,output_Hz,\r\n
@@ -189,8 +207,32 @@ class IDMindIMU:
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
             finally:
-                r.sleep()
+                self.rate.sleep()
         self.calibration = False
+        return True
+
+    def set_imu_rate(self):
+        """ This method must send the appropiate message to set a new rate for IMU """
+        # Send character to enter menu
+        self.ser.write("a\r\n")
+        rospy.sleep(1)
+        # Send character '1' to enter "Confirue Terminal Output"
+        self.ser.write("1\r\n")
+        rospy.sleep(1)
+        # Send character '4' to enter "Set IMU Rate"
+        self.ser.write("4\r\n")
+        rospy.sleep(1)
+        # Send rate in Hz
+        self.ser.write("{}\r\n".format(self.imu_rate))
+        rospy.sleep(1)
+        self.ser.write("x\r\n")
+        rospy.sleep(1)
+        self.ser.write("x\r\n")
+        rospy.sleep(1)
+
+        # Wait for IMU to publish compliant messages
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
         return True
 
     def compute_imu_msg(self):
@@ -252,11 +294,11 @@ class IDMindIMU:
             self.euler[i] += dth
             while (2*np.pi < self.euler[i]) or (self.euler[i] < -2*np.pi):
                 self.euler[i] = self.euler[i] - np.sign(self.euler[i])*2*np.pi
-            w.append(round(dth/dt, 4))        
+            w.append(round(dth/dt, 4))
 
         q_est = transformations.quaternion_from_euler(self.euler[0], self.euler[1], self.euler[2])
         new_q = Quaternion()
-        new_q.x = q_est[0]        
+        new_q.x = q_est[0]
         new_q.y = q_est[1]
         new_q.z = q_est[2]
         new_q.w = q_est[3]
@@ -344,16 +386,19 @@ class IDMindIMU:
         self.diag_pub.publish(diag_msg)
 
     def start(self):
-        r = rospy.Rate(20)
+        self.rate = rospy.Rate(self.control_freq)
 
         while not rospy.is_shutdown():
             try:
                 if self.calibration:
                     self.calibrate_imu()
+                elif self.update_rates:
+                    self.set_imu_rate()
+                    self.update_rates = False
                 else:
                     self.compute_imu_msg()
                 self.publish_diagnostic(0, "OK")
-                r.sleep()
+                self.rate.sleep()
             except KeyboardInterrupt:
                 self.log("Shutting down by user", 2)
                 break
