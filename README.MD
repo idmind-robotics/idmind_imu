@@ -22,11 +22,13 @@ Website: https://www.sparkfun.com/products/16832
 NOTE: Due to some incompatibility, the firmware developed by IDMind does not work for new flashes. Please update.
 
 Usage:
-1. Run Firmware Uploader (python3 firmwares/OpenLogArtemis/Artemis-Firmware-Upload-GUI/tools/artemis_firmware_uploader_gui.py) and choose firmwares/OpenLogArtemis/OpenLog_Artemis-V10-v20.bin
+1. Run Firmware Uploader (python3 firmwares/OpenLogArtemis/Artemis-Firmware-Upload-GUI/tools/artemis_firmware_uploader_gui.py) and choose firmwares/OpenLogArtemis/OpenLog_Artemis-V10-v21.bin
 3. Use Serial Monitor from ArduinoIDE (or another serial communication program) to configure device:
 3.1. Send any character to enter menu
 3.2. Send '3' to enter "Configure IMU Logging", '12' to Enable DMP. '15' to enable Accelerometer, '16' to enable Gyroscope and '17' for Compass.
 3.3. Wait or choose 'x' to leave menu.
+3.4 Send '1' to enter "Configure Terminal Output". Send '1' to disable SD logging, '3' to choose Baudrate and '4' to choose frequency. You should provide those values to the IMU node, although node and IMU frequency can be adjusted by Dynamic Parameters.
+3.5. Wait or choose 'x' to leave menu.
 4. When running the node, choose <imu_code> = "artemisv2". If an error appears, rebooting once seems to solve the issue.
 
 ##### SparkFun 9DoF Razor IMU M0 - razor

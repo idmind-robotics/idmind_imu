@@ -2,9 +2,11 @@
     <arg name="imu" default="artemis" />
     <arg name="tf_prefix" default="" />
     <arg name="use_filter" default="false" />
+    <arg name="baudrate" default="115200" />
 
     <node pkg="idmind_imu" type="idmind_$(arg imu).py" name="idmind_imu" output="screen" respawn="true">
-        <param name="tf_prefix" value="$(arg tf_prefix)" />        
+        <param name="tf_prefix" value="$(arg tf_prefix)" />
+        <param name="baudrate" value="$(arg baudrate)" />
     </node>
     
     <node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter" output="screen" if="$(arg use_filter)">

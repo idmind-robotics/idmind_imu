@@ -65,18 +65,20 @@ class IDMindIMU:
         self.acc_ratio = 1.0
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
 
+        self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
+
+        self.baudrate = rospy.get_param("~baudrate", 230400)
+
         # Connect to IMU
         self.fails = 0
         self.ser = None
         self.connection()
 
-        self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
-
-        self.imu_rate = rospy.get_param("~imu_rate", 10)
-        self.control_freq = rospy.get_param("~control_freq", 20)
-        self.update_rates = False
+        self.imu_rate = rospy.get_param("~imu_rate", 100)
+        self.control_freq = rospy.get_param("~control_freq", 100)
         self.dynamic_server = dynamic_reconfigure.server.Server(ImuParamsConfig, callback=self.update_imu_params)
+        self.update_rates = True
 
         self.ready = True
         self.log("Node is ready", 4)
@@ -98,7 +100,7 @@ class IDMindIMU:
         while not connected and not rospy.is_shutdown():
             self.log("Searching for IMU", 4)
             try:
-                self.ser = IDMindSerial("/dev/idmind-artemis", baudrate=115200, timeout=0.5)
+                self.ser = IDMindSerial("/dev/idmind-artemis", baudrate=self.baudrate, timeout=0.5)
                 self.log("OpenLog Artemis found.", 4)
                 connected = True
             except SerialException as err:
@@ -121,8 +123,9 @@ class IDMindIMU:
 
     def update_imu_params(self, config, level):
         """ Callback to an update in the motor dynamic parameters of the platform """
+        self.log("Updating: {} to {} and {} to {}".format(self.control_freq, config.control_freq, self.imu_rate, config.imu_freq), 2)
         self.control_freq = config.control_freq
-        self.rate = rospy.Rate(self.control_freq)
+        self.rate = rospy.Rate(config.control_freq)
         if self.imu_rate != config.imu_freq:
             self.update_rates = True
             self.imu_rate = config.imu_freq
@@ -156,7 +159,6 @@ class IDMindIMU:
             :return:
         """
         self.log("Calibrating IMU", 5)
-        r = rospy.Rate(20)
         activated = False
         calibrated = False
         reads = 0
@@ -337,7 +339,7 @@ class IDMindIMU:
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
-        acc = [0, 0, 0]        
+        acc = [0, 0, 0]
         for idx in range(0, 3):
             data = [a[idx] for a in self.acc_hist]
             res = butter_lowpass_filter(data, cutoff=0.5, fs=10.0, order=1)
@@ -411,7 +413,6 @@ class IDMindIMU:
 
 if __name__ == "__main__":
     rospy.init_node("idmind_artemis")
-
     imu = IDMindIMU()
     imu.start()
     rospy.loginfo("{}: Node stopped".format(rospy.get_name()))
