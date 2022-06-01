@@ -5,7 +5,7 @@ from serial import SerialException
 
 import rospy
 from datetime import datetime
-from std_msgs.msg import String
+from std_msgs.msg import String , Float32
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
@@ -19,6 +19,7 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 # TESTING RESTARTING PORT
 import os
 import fcntl
+from math import atan2
 
 VERBOSE = 7
 LOGS = 7
@@ -38,7 +39,9 @@ class IDMindArtemisHub:
         self.ready = False
         rospy.Service("~ready", Trigger, self.report_ready)
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
-        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)        
+        self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10) 
+        self.yaw_pub = rospy.Publisher("/yaw", Float32, queue_size=10) 
+              
         self.tf_prefix = rospy.get_param("~tf_prefix", "")
                 
         # Connect to Artemis HUB
@@ -194,11 +197,15 @@ class IDMindArtemisHub:
         Magnetometer	mX,mY,mZ	micro Tesla
         Temperature	imu_degC	Degrees Centigrade
         """
+
         # Compute Quaternion, if data is consistent
+
         q = [float(data[self.data_headers["IMU"]["QX"]]),
              float(data[self.data_headers["IMU"]["QY"]]),
              float(data[self.data_headers["IMU"]["QZ"]]), 
              0]
+        imu = float(data[self.data_headers["IMU"]["QX"]])
+        self.yaw_pub.publish(imu)
 
         # Data may be inconsistent, try to fix it
         if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
@@ -265,6 +272,7 @@ class IDMindArtemisHub:
             [r, p, y] = transformations.euler_from_quaternion([new_q.x, new_q.y, new_q.z, new_q.w])
             self.imu_euler_pub.publish("Roll: {} | Pitch: {} | Yaw: {}".format(r, p, y))
 
+
         return True
     
     def handle_gps(self, data, timestamp):
@@ -321,7 +329,7 @@ class IDMindArtemisHub:
         time_msg = TimeReference()
         time_msg.header.stamp = timestamp
         gps_time = datetime.strptime("{} {}".format(data[self.data_headers["GPS"]["Date"]], data[self.data_headers["GPS"]["Time"]]),
-                                     "%d/%m/%Y %H:%M:%S.%f")
+                                     "%m/%d/%Y %H:%M:%S.%f")
         total_secs = (gps_time - epoch).total_seconds()
         time_msg.time_ref.secs = int(total_secs)
         time_msg.time_ref.nsecs = total_secs-int(total_secs)

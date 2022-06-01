@@ -252,7 +252,7 @@ class IDMindIMU:
             self.euler[i] += dth
             while (2*np.pi < self.euler[i]) or (self.euler[i] < -2*np.pi):
                 self.euler[i] = self.euler[i] - np.sign(self.euler[i])*2*np.pi
-            w.append(round(dth/dt, 4))        
+            w.append(round(dth/dt, 4))
 
         q_est = transformations.quaternion_from_euler(self.euler[0], self.euler[1], self.euler[2])
         new_q = Quaternion()
