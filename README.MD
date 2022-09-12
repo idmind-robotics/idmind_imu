@@ -16,6 +16,15 @@ This package contains the nodes responsible for communication with IMU devices a
     </include>
     
 ### Supported devices:
+##### TinkerForge IMU Brick 2.0 (with BNO-055 IMU)
+Website: https://www.tinkerforge.com/en/doc/Hardware/Bricks/IMU_V2_Brick.html
+
+Usage:
+1. Install [BrickDaemon](https://www.tinkerforge.com/en/doc/Software/Brickd.html#brickd)
+2. Install [Python bindings](https://www.tinkerforge.com/en/doc/Software/API_Bindings_Python.html#api-bindings-python-install)
+3. Check UID (use [BrickViewer](https://www.tinkerforge.com/en/doc/Software/Brickv.html#brickv) or `sudo lsusb -v -d 16d0:063d | grep iSerial`)
+
+
 ##### SparkFun OpenLog_Artemis (with ICM-20948 IMU)
 Website: https://www.sparkfun.com/products/16832
 

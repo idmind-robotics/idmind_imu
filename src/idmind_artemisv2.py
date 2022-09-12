@@ -171,6 +171,7 @@ class IDMindIMU:
                     activated = True
                 else:
                     reads = reads + 1
+                    print(data)
                 if reads > 50:
                     self.log("IMU is not outputting values. Restarting.", 2, alert="warn")
                     self.connection()
