@@ -5,13 +5,11 @@ from scipy.signal import butter, lfilter, freqz
 from serial import SerialException
 
 import rospy
-from std_msgs.msg import String, Int32
-from sensor_msgs.msg import Imu
+from std_msgs.msg import String
+from sensor_msgs.msg import Imu, MagneticField
 from geometry_msgs.msg import Quaternion
 from tf_conversions import transformations
 from std_srvs.srv import Trigger, TriggerResponse
-from idmind_imu.cfg import ImuParamsConfig
-import dynamic_reconfigure.server
 
 from idmind_serial2.idmind_serialport import IDMindSerial
 from idmind_msgs.msg import Log
@@ -34,18 +32,16 @@ def butter_lowpass(cutoff, fs, order=5):
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
     return b, a
 
-
 def butter_lowpass_filter(data, cutoff, fs, order=5):
     b, a = butter_lowpass(cutoff, fs, order=order)
     y = lfilter(b, a, data)
     return y
 
-
 class IDMindIMU:
     """
     This class extracts data from the Sparkfun OpenLog Artemis (with ICM 20948)
     The OpenLogArtemis sketch must be uploaded to the unit. It will publish to /imu the values of orientation,
-    angular velocity and linear acceleration.
+    angular velocity and linear acceleration. It will also publish Magnetic Field data to /magnetic_field.
     In case the connection is lost, it will try to reconnect.
 
     TODO: Allow for calibration of components
@@ -57,28 +53,21 @@ class IDMindIMU:
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
 
-        self.euler = [0.0]*3
         self.imu_data = ""
-        self.imu_frame = "imu"
         self.calibration = True
         self.last_imu = [Imu()]*10
-        self.acc_hist = [[0, 0, 9.82]] * 100
+        self.acc_hist = [[0,0,9.82]]*100
         self.acc_ratio = 1.0
-
-        self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
-        self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
-
-        self.baudrate = rospy.get_param("~baudrate", 230400)
+        self.tf_prefix = rospy.get_param("~tf_prefix", "")
 
         # Connect to IMU
         self.fails = 0
         self.ser = None
         self.connection()
 
-        self.imu_rate = rospy.get_param("~imu_rate", 100)
-        self.control_freq = rospy.get_param("~control_freq", 100)
-        self.dynamic_server = dynamic_reconfigure.server.Server(ImuParamsConfig, callback=self.update_imu_params)
-        self.update_rates = True
+        self.imu_pub = rospy.Publisher("~imu", Imu, queue_size=10)
+        self.imu_mag_pub = rospy.Publisher("~mag", MagneticField, queue_size=10)
+        self.imu_euler_pub = rospy.Publisher("~euler_string", String, queue_size=10)
 
         self.ready = True
         self.log("Node is ready", 4)
@@ -100,7 +89,7 @@ class IDMindIMU:
         while not connected and not rospy.is_shutdown():
             self.log("Searching for IMU", 4)
             try:
-                self.ser = IDMindSerial("/dev/idmind-artemis", baudrate=self.baudrate, timeout=0.5)
+                self.ser = IDMindSerial("/dev/idmind-artemis", baudrate=115200, timeout=0.5)
                 self.log("OpenLog Artemis found.", 4)
                 connected = True
             except SerialException as err:
@@ -120,17 +109,6 @@ class IDMindIMU:
                     rospy.sleep(1)
 
         return connected
-
-    def update_imu_params(self, config, level):
-        """ Callback to an update in the motor dynamic parameters of the platform """
-        self.log("Updating: {} to {} and {} to {}".format(self.control_freq, config.control_freq, self.imu_rate, config.imu_freq), 2)
-        self.control_freq = config.control_freq
-        self.rate = rospy.Rate(config.control_freq)
-        if self.imu_rate != config.imu_freq:
-            self.update_rates = True
-            self.imu_rate = config.imu_freq
-        self.imu_frame = config.imu_frame
-        return config
 
     #########################
     #  AUXILIARY FUNCTIONS  #
@@ -160,6 +138,7 @@ class IDMindIMU:
             :return:
         """
         self.log("Calibrating IMU", 5)
+        r = rospy.Rate(20)
         activated = False
         calibrated = False
         reads = 0
@@ -167,12 +146,12 @@ class IDMindIMU:
         while not activated and not rospy.is_shutdown():
             try:
                 data = self.ser.readline()
+                #print(data)
                 if len(data.split(",")) == 16:
                     self.log("IMU is outputting values", 7)
                     activated = True
                 else:
                     reads = reads + 1
-                    # print(data)
                 if reads > 50:
                     self.log("IMU is not outputting values. Restarting.", 2, alert="warn")
                     self.connection()
@@ -180,7 +159,7 @@ class IDMindIMU:
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
             finally:
-                self.rate.sleep()
+                r.sleep()
 
         # Wait for yaw values to stabilize
         # rtcDate,rtcTime,Q6_1,Q6_2,Q6_3,RawAX,RawAY,RawAZ,RawGX,RawGY,RawGZ,RawMX,RawMY,RawMZ,output_Hz,\r\n
@@ -211,44 +190,16 @@ class IDMindIMU:
             except KeyboardInterrupt:
                 raise KeyboardInterrupt()
             finally:
-                self.rate.sleep()
+                r.sleep()
         self.calibration = False
         return True
 
-    def set_imu_rate(self):
-        """ This method must send the appropiate message to set a new rate for IMU """
-        # Send character to enter menu
-        self.ser.write("a\r\n")
-        rospy.sleep(1)
-        # Send character '1' to enter "Confirue Terminal Output"
-        self.ser.write("1\r\n")
-        rospy.sleep(1)
-        # Send character '4' to enter "Set IMU Rate"
-        self.ser.write("4\r\n")
-        rospy.sleep(1)
-        # Send rate in Hz
-        self.ser.write("{}\r\n".format(self.imu_rate))
-        rospy.sleep(1)
-        self.ser.write("x\r\n")
-        rospy.sleep(1)
-        self.ser.write("x\r\n")
-        rospy.sleep(1)
-
-        # Wait for IMU to publish compliant messages
-        self.ser.reset_input_buffer()
-        self.ser.reset_output_buffer()
-        return True
-
     def compute_imu_msg(self):
-        """
-            This method reads data from the Openlog Artemis output.
-            We receive 3 coord Quaternion, which causes discontinuities in rotation.
-            RPY coords are stored and reused to compute a new quaternion
-        """
         # Get data
         # rtcDate,rtcTime,Q6_1,Q6_2,Q6_3,RawAX,RawAY,RawAZ,RawGX,RawGY,RawGZ,RawMX,RawMY,RawMZ,output_Hz,\r\n
         try:
             data = self.ser.readline().split(",")
+            #print(data[11],data[12],data[13])
         except SerialException:
             self.log("Error reading data from IMU", 2, alert="warn")
             self.fails = self.fails + 1
@@ -261,20 +212,38 @@ class IDMindIMU:
         if len(data) < 16:
             self.log("IMU Communication failed", 4, alert="warn")
             return
+        #print(data)
 
         # Compute Absolute Quaternion
         try:
             q = [float(data[2]), float(data[3]), float(data[4]), 0]
             if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) > 1.0:
                 self.log("Inconsistent IMU readings", 4, alert="warn")
+                # self.log("Q0: {} | Q1: {} | Q2: {}".format(q[0], q[1], q[2]), 2, alert="warn")
                 return
+                #q_norm = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])
+                #q[0] = q[0]/q_norm
+                #q[1] = q[1]/q_norm
+                #q[2] = q[2]/q_norm
+
             q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
         except ValueError:
             self.log("Error converting IMU message - {}".format(data), 5, alert="warn")
             return
 
+        new_q = Quaternion()
+        new_q.x = q[0]
+        new_q.y = q[1]
+        new_q.z = q[2]
+        new_q.w = q[3]
+
+        magx = data[12]
+        magy = data[13]
+        magz = data[14]
+
+
         # Compute Linear Acceleration
-        acc = [round(float(data[5])*self.acc_ratio, 3), round(float(data[6])*self.acc_ratio, 3), round(float(data[7])*self.acc_ratio, 3)]
+        acc = [round(float(data[6])*self.acc_ratio, 3), round(float(data[7])*self.acc_ratio, 3), round(float(data[8])*self.acc_ratio, 3)]
         self.acc_hist.pop(0)
         self.acc_hist.append(acc)
 
@@ -288,31 +257,22 @@ class IDMindIMU:
         euler2 = transformations.euler_from_quaternion(q)
         curr_time = rospy.Time.now()
         dt = (curr_time - self.last_imu[-1].header.stamp).to_sec()
-        w = []
-        for i in range(0, 3):
-            dth = euler2[i] - euler1[i]
-            # The IMU Quaternion jumps need to be handled
-            while (3.14 < dth) or (dth < -3.14):
-                dth = dth - np.sign(dth)*2*np.pi
-            # Keep euler angles in [-2p and 2pi]
-            self.euler[i] += dth
-            while (2*np.pi < self.euler[i]) or (self.euler[i] < -2*np.pi):
-                self.euler[i] = self.euler[i] - np.sign(self.euler[i])*2*np.pi
-            w.append(round(dth/dt, 4))
-
-        q_est = transformations.quaternion_from_euler(self.euler[0], self.euler[1], self.euler[2])
-        new_q = Quaternion()
-        new_q.x = q_est[0]
-        new_q.y = q_est[1]
-        new_q.z = q_est[2]
-        new_q.w = q_est[3]
+        w_x = round((euler2[0] - euler1[0])/dt, 4)
+        w_y = round((euler2[1] - euler1[1])/dt, 4)
+        w_z = round((euler2[2] - euler1[2])/dt, 4)
 
         # Compute IMU Msg
         imu_msg = Imu()
-        # imu_msg.header.frame_id = self.tf_prefix+"imu"
-        imu_msg.header.frame_id = self.imu_frame
+        imu_msg.header.frame_id = self.tf_prefix+"imu"
         imu_msg.header.stamp = curr_time
         imu_msg.orientation = new_q
+
+        # Compute IMU Magnetic Field Msg
+        imu_mag_msg = MagneticField()
+        imu_mag_msg.header.frame_id = self.tf_prefix+"imu"
+        imu_mag_msg.header.stamp = curr_time
+
+
         # Set the sensor covariances
         imu_msg.orientation_covariance = [
            0.001, 0, 0,
@@ -321,9 +281,9 @@ class IDMindIMU:
         ]
 
         # Angular Velocity
-        imu_msg.angular_velocity.x = w[0]
-        imu_msg.angular_velocity.y = w[1]
-        imu_msg.angular_velocity.z = w[2]
+        imu_msg.angular_velocity.x = w_x
+        imu_msg.angular_velocity.y = w_y
+        imu_msg.angular_velocity.z = w_z
         # Datasheet says:
         # - Noise Spectral Density: 0.015dps/sqrt(Hz)
         # - Cross Axis Sensitivy: +-2%
@@ -342,7 +302,7 @@ class IDMindIMU:
         # imu_msg.angular_velocity_covariance = [-1] * 9
 
         # Linear Acceleration
-        acc = [0, 0, 0]
+        acc = [0, 0, 0]        
         for idx in range(0, 3):
             data = [a[idx] for a in self.acc_hist]
             res = butter_lowpass_filter(data, cutoff=0.5, fs=10.0, order=1)
@@ -369,6 +329,32 @@ class IDMindIMU:
         imu_msg.linear_acceleration_covariance[4] = 0.01
         imu_msg.linear_acceleration_covariance[8] = 0.05
 
+
+        #print(magx, magy,magz)
+
+
+        #Magnetic Field (Compass)
+        imu_mag_msg.magnetic_field.x = (float)(magx)
+        imu_mag_msg.magnetic_field.y = (float)(magy)
+        imu_mag_msg.magnetic_field.z = (float)(magz)
+        #Data Sheet:
+        #The triple-axis MEMS magnetometer in ICM-20948 includes a wide range of features:
+        # - 3-axis silicon monolithic Hall-effect magnetic sensor with magnetic concentrator
+        # - Wide dynamic measurement range and high resolution with lower current consumption.
+        # - Output data resolution of 16-bits
+        # - Full scale measurement range is +/-4900 microT
+        # - Self-test function with internal magnetic source to confirm magnetic sensor operation on end products
+
+        imu_mag_msg.magnetic_field_covariance = [0.0] * 9
+        imu_mag_msg.magnetic_field_covariance[0] = 0.0001
+        imu_mag_msg.magnetic_field_covariance[4] = 0.0001
+        imu_mag_msg.magnetic_field_covariance[8] = 0.0001
+
+        # Magnetic Field msg publishing (Compass)
+        self.imu_mag_pub.publish(imu_mag_msg)
+
+
+
         # Message publishing
         self.imu_pub.publish(imu_msg)
         new_q = imu_msg.orientation
@@ -380,7 +366,7 @@ class IDMindIMU:
     def publish_diagnostic(self, level, message):
         """ Auxiliary method to publish Diagnostic messages """
         diag_msg = DiagnosticArray()
-        diag_msg.header.frame_id = self.imu_frame
+        diag_msg.header.frame_id = "imu"
         diag_msg.header.stamp = rospy.Time.now()
         imu_msg = DiagnosticStatus()
         imu_msg.name = "IMU"
@@ -391,19 +377,16 @@ class IDMindIMU:
         self.diag_pub.publish(diag_msg)
 
     def start(self):
-        self.rate = rospy.Rate(self.control_freq)
+        r = rospy.Rate(20)
 
         while not rospy.is_shutdown():
             try:
                 if self.calibration:
                     self.calibrate_imu()
-                elif self.update_rates:
-                    self.set_imu_rate()
-                    self.update_rates = False
                 else:
                     self.compute_imu_msg()
                 self.publish_diagnostic(0, "OK")
-                self.rate.sleep()
+                r.sleep()
             except KeyboardInterrupt:
                 self.log("Shutting down by user", 2)
                 break
@@ -416,6 +399,7 @@ class IDMindIMU:
 
 if __name__ == "__main__":
     rospy.init_node("idmind_artemis")
+
     imu = IDMindIMU()
     imu.start()
     rospy.loginfo("{}: Node stopped".format(rospy.get_name()))

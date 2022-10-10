@@ -3,3 +3,5 @@
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="1b4f", ATTRS{idProduct}=="9d0f", SYMLINK+="idmind-razor", GROUP=="dialout"
 # OpenLog Artemis
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="idmind-artemis", GROUP=="dialout"
+# IMU Brick2
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="16d0", ATTRS{idProduct}=="063d", SYMLINK+="idmind-imubrick2", GROUP=="dialout"

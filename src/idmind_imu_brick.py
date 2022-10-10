@@ -4,6 +4,8 @@ import rospy
 from idmind_msgs.msg import Log
 from sensor_msgs.msg import Imu
 from std_msgs.msg import String
+import dynamic_reconfigure.server
+from idmind_imu.cfg import ImuParamsConfig
 from std_srvs.srv import Trigger, TriggerResponse
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
@@ -18,6 +20,8 @@ from tinkerforge.brick_imu_v2 import BrickIMUV2
 
 class ImuBrick(object):
     def __init__(self, verbose=5):
+        self.ready = False
+        rospy.Service("~ready", Trigger, self.report_ready)
         self.verbose = verbose
         self.verbose_logs = verbose
         self.logging = rospy.Publisher("/idmind_logging", Log, queue_size=10)
@@ -25,17 +29,16 @@ class ImuBrick(object):
         self.euler_pub = rospy.Publisher("~euler", String, queue_size=10)
         self.diag_pub = rospy.Publisher("/diagnostics", DiagnosticArray, queue_size=10)
 
-        self.ready = False
-        rospy.Service("~ready", Trigger, self.report_ready)
-
         # Dynamic Params
-        self.r = rospy.Rate(20)
+        self.rate = rospy.Rate(20)
         self.host = "localhost"
         self.port = 4223
-        self.tf_prefix = ""
-        self.imu_frame = "imu"
+        self.timeout = 5.0
+        self.imu_frame = rospy.get_param("~imu_frame", "imu")
+        self.dynamic_server = dynamic_reconfigure.server.Server(ImuParamsConfig, callback=self.update_imu_params)
 
         #  Connection Variables and callbacks  #
+        self.last_imu_msg = None
         self.ipcon = IPConnection()
         self.ipcon.register_callback(IPConnection.CALLBACK_CONNECTED, self.brick_daemon_connection)
         self.ipcon.register_callback(IPConnection.CALLBACK_DISCONNECTED, self.brick_daemon_disconnection)
@@ -43,6 +46,9 @@ class ImuBrick(object):
         self.imu = None
         self.imu_uid = None
         self.connect_thread = None
+
+        self.ready = True
+        self.log("Node is ready", 4)
 
     ###############
     #  CALLBACKS  #
@@ -52,9 +58,15 @@ class ImuBrick(object):
         self.log("Replying to 'ready' request", 7)
         return TriggerResponse(self.ready, rospy.get_name()+" is " + ("ready" if self.ready else "not ready"))
 
+    def update_imu_params(self, config, _level):
+        self.rate = rospy.Rate(config.control_freq)
+        self.timeout = config.timeout
+        return config
+
     def brick_daemon_connection(self, reason):
         """ Callback registered for IPConnection.CALLBACK_CONNECTED """
         # Call enumerate and reconnect to IMU Brick
+        self.log("Connected to BrickDaemon", 5)
         self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, self.enumerate_callback)
         self.ipcon.enumerate()
         return True
@@ -67,21 +79,23 @@ class ImuBrick(object):
 
     def enumerate_callback(self, uid, con_uid, pos, hd_version, firmware_version, device_identifier, enumeration_type):
         if enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
-            self.log("Waiting for IMU Brick to connect", 7)
+            self.log("Waiting for IMU Brick to connect", 5)
             return
 
         # Set imu_uid if any IMU is discovered, we assume that there is only one
         if device_identifier == 18:
+            self.log("IMU Brick connected to BrickDaemon", 2)
             self.imu_uid = uid
             self.imu = BrickIMUV2(self.imu_uid, self.ipcon)
             self.imu.register_callback(self.imu.CALLBACK_ALL_DATA, self.publish_imu)
             self.imu.set_all_data_period(50)
+            rospy.sleep(2)
 
     def publish_imu(self, acc, mag, ang_vel, euler, quat, linear_acc, gravity, temp, calibration_status):
         try:
             imu_msg = Imu()
             imu_msg.header.stamp = rospy.Time.now()
-            imu_msg.header.frame_id = self.tf_prefix + self.imu_frame
+            imu_msg.header.frame_id = self.imu_frame
 
             # Quaternion Orientation
             imu_msg.orientation.w = quat[0]/16383.0
@@ -118,6 +132,8 @@ class ImuBrick(object):
             r = euler[1]/16.0
             p = euler[2]/16.0
             self.euler_pub.publish("Roll: {} | Pitch: {} | Yaw: {}".format(r, p, y))
+            self.last_imu_msg = rospy.Time.now()
+            self.publish_diagnostic(DiagnosticStatus.OK, "IMU is OK")
         except Exception as err:
             self.log(err, 2, alert="error")
 
@@ -170,18 +186,20 @@ class ImuBrick(object):
                 # Check Daemon Connection
                 conn_state = self.ipcon.get_connection_state()
                 if conn_state != 1:
-                    self.log("Connecting to Brick Daemon", 2, alert="warn")
+                    self.log("Connecting to Brick Daemon", 5)
+                    self.publish_diagnostic(DiagnosticStatus.WARN, "Connecting to BrickDaemon")
                     if conn_state == 0:
                         self.connect_brick_daemon()
                 # Check IMU Brick Connection
                 elif self.imu_uid is None:
-                    self.log("Looking for for IMU Brick", 5)
+                    self.log("Looking for IMU Brick", 5)
+                    self.publish_diagnostic(DiagnosticStatus.WARN, "Looking for IMU Brick")
                     self.ipcon.enumerate()
                 # Compute IMU stuff
                 else:
-                    self.log("Doing IMU Stuff", 5)
-
-                self.r.sleep()
+                    if self.last_imu_msg is None or (rospy.Time.now() - self.last_imu_msg).to_sec() > self.timeout:
+                        self.publish_diagnostic(DiagnosticStatus.ERROR, "No data from IMU Brick")
+                self.rate.sleep()
             except KeyboardInterrupt:
                 self.log("Shutting down by user", 2)
                 break
@@ -191,56 +209,3 @@ if __name__ == "__main__":
     rospy.init_node("idmind_imu")
     i = ImuBrick()
     i.start()
-
-
-
-
-# HOST = "localhost"
-# PORT = 4223
-# UID = "6LeW45"  # Change XXYYZZ to the UID of your IMU Brick 2.0
-
-
-# def cb_all_data(acceleration, magnetic_field, angular_velocity, euler_angle, quaternion,
-#                 linear_acceleration, gravity_vector, temperature, calibration_status):
-#     print("Acceleration [X]: " + str(acceleration[0]/100.0) + " m/s²")
-#     print("Acceleration [Y]: " + str(acceleration[1]/100.0) + " m/s²")
-#     print("Acceleration [Z]: " + str(acceleration[2]/100.0) + " m/s²")
-#     print("Magnetic Field [X]: " + str(magnetic_field[0]/16.0) + " µT")
-#     print("Magnetic Field [Y]: " + str(magnetic_field[1]/16.0) + " µT")
-#     print("Magnetic Field [Z]: " + str(magnetic_field[2]/16.0) + " µT")
-#     print("Angular Velocity [X]: " + str(angular_velocity[0]/16.0) + " °/s")
-#     print("Angular Velocity [Y]: " + str(angular_velocity[1]/16.0) + " °/s")
-#     print("Angular Velocity [Z]: " + str(angular_velocity[2]/16.0) + " °/s")
-#     print("Euler Angle [Heading]: " + str(euler_angle[0]/16.0) + " °")
-#     print("Euler Angle [Roll]: " + str(euler_angle[1]/16.0) + " °")
-#     print("Euler Angle [Pitch]: " + str(euler_angle[2]/16.0) + " °")
-#     print("Quaternion [W]: " + str(quaternion[0]/16383.0))
-#     print("Quaternion [X]: " + str(quaternion[1]/16383.0))
-#     print("Quaternion [Y]: " + str(quaternion[2]/16383.0))
-#     print("Quaternion [Z]: " + str(quaternion[3]/16383.0))
-#     print("Linear Acceleration [X]: " + str(linear_acceleration[0]/100.0) + " m/s²")
-#     print("Linear Acceleration [Y]: " + str(linear_acceleration[1]/100.0) + " m/s²")
-#     print("Linear Acceleration [Z]: " + str(linear_acceleration[2]/100.0) + " m/s²")
-#     print("Gravity Vector [X]: " + str(gravity_vector[0]/100.0) + " m/s²")
-#     print("Gravity Vector [Y]: " + str(gravity_vector[1]/100.0) + " m/s²")
-#     print("Gravity Vector [Z]: " + str(gravity_vector[2]/100.0) + " m/s²")
-#     print("Temperature: " + str(temperature) + " °C")
-#     print("Calibration Status: " + format(calibration_status, "08b"))
-#     print("")
-
-
-# if __name__ == "__main__":
-#     ipcon = IPConnection()          # Create IP connection
-#     imu = BrickIMUV2(UID, ipcon)    # Create device object
-
-#     ipcon.connect(HOST, PORT)       # Connect to brickd
-#     # Don't use device before ipcon is connected
-
-#     # Register all data callback to function cb_all_data
-#     imu.register_callback(imu.CALLBACK_ALL_DATA, cb_all_data)
-
-#     # Set period for all data callback to 0.1s (100ms)
-#     imu.set_all_data_period(100)
-
-#     input("Press key to exit\n")    # Use raw_input() in Python 2
-#     ipcon.disconnect()
