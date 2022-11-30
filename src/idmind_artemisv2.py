@@ -24,7 +24,6 @@ import fcntl
 
 VERBOSE = 5
 LOGS = 5
-USBDEVFS_RESET = ord('U') << (4*2) | 20
 
 
 # Butterwoth Low pass filter for linear acceleration
@@ -110,10 +109,10 @@ class IDMindIMU:
                 elif "Inappropriate ioctl" in str(err):
                     self.log("Restarting USB port", 2, alert="error")
                     fd = os.open("/dev/idmind-artemis", os.O_WRONLY)
-                    try:
-                        fcntl.ioctl(fd, USBDEVFS_RESET, 0)
-                    finally:
-                        os.close(fd)
+                    # try:
+                    #     fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                    # finally:
+                    os.close(fd)
                     rospy.sleep(1)
                 else:
                     self.log("Exception connecting to IMU: {}".format(err), 2, alert="warn")
@@ -165,7 +164,7 @@ class IDMindIMU:
         # Wait for the IMU to start outputting values
         while not activated and not rospy.is_shutdown():
             try:
-                data = self.ser.readline()
+                data = bytearray(self.ser.readline()).decode("latin")
                 if len(data.split(",")) == 16:
                     self.log("IMU is outputting values", 7)
                     activated = True
@@ -187,7 +186,7 @@ class IDMindIMU:
         th_hist = [1e5]*3
         while not calibrated and not rospy.is_shutdown():
             try:
-                data = self.ser.readline().split(",")
+                data = bytearray(self.ser.readline()).decode("latin").split(",")
                 q = [float(data[2]), float(data[3]), float(data[4]), 0]
                 if ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])) <= 1.0:
                     q[3] = np.sqrt(1.0 - ((q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2])))
@@ -217,20 +216,26 @@ class IDMindIMU:
     def set_imu_rate(self):
         """ This method must send the appropiate message to set a new rate for IMU """
         # Send character to enter menu
-        self.ser.write("a\r\n")
+        serialcmd = "a\r\n"
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
         # Send character '1' to enter "Confirue Terminal Output"
-        self.ser.write("1\r\n")
+        serialcmd = "1\r\n"
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
         # Send character '4' to enter "Set IMU Rate"
-        self.ser.write("4\r\n")
+        serialcmd = "4\r\n"
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
         # Send rate in Hz
-        self.ser.write("{}\r\n".format(self.imu_rate))
+        serialcmd = "{}\r\n".format(self.imu_rate)
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
-        self.ser.write("x\r\n")
+        serialcmd = "x\r\n"
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
-        self.ser.write("x\r\n")
+        serialcmd = "x\r\n"
+        self.ser.write(serialcmd.encode())
         rospy.sleep(1)
 
         # Wait for IMU to publish compliant messages
@@ -247,7 +252,7 @@ class IDMindIMU:
         # Get data
         # rtcDate,rtcTime,Q6_1,Q6_2,Q6_3,RawAX,RawAY,RawAZ,RawGX,RawGY,RawGZ,RawMX,RawMY,RawMZ,output_Hz,\r\n
         try:
-            data = self.ser.readline().split(",")
+            data = bytearray(self.ser.readline()).decode("latin").split(",")
         except SerialException:
             self.log("Error reading data from IMU", 2, alert="warn")
             self.fails = self.fails + 1
