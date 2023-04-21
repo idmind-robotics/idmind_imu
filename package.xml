@@ -13,7 +13,6 @@
   <!-- ROS Packages -->
   <depend>rospy</depend>
   <depend>sensor_msgs</depend>
-  <depend>imu_filter_madgwick</depend>
   <depend>std_msgs</depend>
   <depend>message_generation</depend>
   <depend>message_runtime</depend>

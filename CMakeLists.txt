@@ -4,7 +4,6 @@ project(idmind_imu)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   idmind_serial2
-  imu_filter_madgwick
   std_msgs
   message_generation
   dynamic_reconfigure
