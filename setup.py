@@ -14,6 +14,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*launch.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'model', 'imu_razor'), glob('model/imu_razor/*.*')),
+        (os.path.join('share', package_name, 'model', 'imu_brick_v2'), glob('model/imu_brick_v2/*.*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

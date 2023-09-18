@@ -1,7 +1,7 @@
-#ROS package idmind_imu
+# ROS2 package idmind_imu
 
 ## Description
-This package contains the nodes responsible for communication with IMU devices and publishing the information under ROS2 topics.
+This package contains the [ROS2](https://docs.ros.org/en/humble/index.html) nodes for communication with IMU devices.
 
 ## Usage
 1. Clone the repository into `<ros2_ws>/src`
