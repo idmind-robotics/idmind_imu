@@ -17,7 +17,7 @@
         <link name="${imu_name}">
             <visual>
                 <geometry>
-                    <mesh filename="package://idmind_imu/model/imu_brick_v2/imu_brick_v2.stl" scale="0.001 0.001 0.001"/>
+                    <mesh filename="/home/cneves/ros2_youship/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.stl" scale="0.001 0.001 0.001"/>
                 </geometry>
                 <material name="black" />
 	            <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -46,15 +46,8 @@
                 <always_on>true</always_on>
                 <update_rate>25</update_rate>
                 <visualize>false</visualize>
-                <topic>__default_topic__</topic>
-                <plugin filename="libgazebo_ros_imu_sensor.so" name="imu_plugin">
-                    <topicName>idmind_imu/imu</topicName>
-                    <bodyName>imu</bodyName>
-                    <updateRateHZ>20.0</updateRateHZ>
-                    <gaussianNoise>0.001</gaussianNoise>
-                    <xyzOffset>0 0 0</xyzOffset>
-                    <rpyOffset>0 0 0</rpyOffset>
-                    <frameName>${prefix}imu</frameName>
+                <topic>imu</topic>
+                <plugin filename="libignition-gazebo-imu-system.so" name="ignition::gazebo::systems::Imu">
                 </plugin>
                 <pose>0 0 0 0 0 0</pose>
             </sensor>
