@@ -17,7 +17,7 @@
         <link name="${imu_name}">
             <visual>
                 <geometry>
-                    <mesh filename="/home/cneves/ros2_youship/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.stl" scale="0.001 0.001 0.001"/>
+                    <mesh filename="file:///home/cneves/ros2_youship/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.dae" /> <!--scale="0.001 0.001 0.001"/-->
                 </geometry>
                 <material name="black" />
 	            <origin rpy="0 0 0" xyz="0 0 0"/>
