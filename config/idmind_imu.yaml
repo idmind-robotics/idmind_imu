@@ -1,9 +1,9 @@
-imu_brick_node:
+/**:
   ros__parameters:
     use_sim_time: false
     control_freq: 20.0
     imu_freq: 20.0
-    imu_frame: "imu"
+    imu_frame: "imu2"
     imu_leds: false
     imu_fusion_mode: 2
     timeout: 1.0

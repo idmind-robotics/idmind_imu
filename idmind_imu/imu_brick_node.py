@@ -30,7 +30,6 @@ class IDMindImuBrick(Node):
         self.host = "localhost"
         self.port = 4223
 
-        
         self.control_freq = self.declare_parameter("control_freq", 20.0, ParameterDescriptor(description="Frequency of the main loop")).get_parameter_value().double_value
         self.imu_freq = self.declare_parameter("imu_freq", 20.0, ParameterDescriptor(description="Frequency of IMU stream")).get_parameter_value().double_value
         self.imu_frame = self.declare_parameter("imu_frame", "imu", ParameterDescriptor(description="Frame name for the IMU")).get_parameter_value().string_value
