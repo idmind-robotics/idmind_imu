@@ -52,6 +52,7 @@ class IDMindImuBrick(Node):
         
         
         # Finalizing
+        self.t = None
         self.imu_uid = None
         self.ipcon = IPConnection()
         self.ipcon.register_callback(IPConnection.CALLBACK_CONNECTED, self.brick_daemon_connection)
@@ -255,8 +256,8 @@ class IDMindImuBrick(Node):
     def connect_brick_daemon(self):
         """ Non-blocking method to connect to BrickDaemon """
         # IPConnection.connect() is blocking, so call on different thread
-        t = threading.Thread(target=self.ipcon.connect, name="connect_brick_daemon", args=(self.host, self.port))
-        t.start()
+        self.t = threading.Thread(target=self.ipcon.connect, name="connect_brick_daemon", args=(self.host, self.port))
+        self.t.start()
         return True
 
     def update_config(self):
@@ -295,31 +296,36 @@ class IDMindImuBrick(Node):
         
                 
     def main_loop(self):
-        if rclpy.ok():
-            # Check Daemon Connection
-            conn_state = self.ipcon.get_connection_state()
-            
-            if conn_state != 1:
-                self.log("Connecting to Brick Daemon", 2)
-                if conn_state == 0:
-                    self.connect_brick_daemon()
-            # Check IMU Brick Connection
-            elif self.imu_uid is None:
-                self.log("Looking for IMU Brick", 2)
-                self.publish_diagnostic(DiagnosticStatus.WARN, "Looking for IMU Brick")
-                self.ipcon.enumerate()
-            # Compute IMU stuff
-            else:
-                if self.last_imu_msg is None or self.getDt(self.last_imu_msg) > self.timeout:
-                    msg = "No data from IMU Brick"
-                    self.log(msg, 2, alert="warn")
-                    self.publish_diagnostic(DiagnosticStatus.ERROR, msg)
+        try:
+            if rclpy.ok():
+                # Check Daemon Connection
+                conn_state = self.ipcon.get_connection_state()
+                
+                if conn_state != 1:
+                    self.log("Connecting to Brick Daemon", 2)
+                    if conn_state == 0:
+                        self.connect_brick_daemon()
+                # Check IMU Brick Connection
+                elif self.imu_uid is None:
+                    self.log("Looking for IMU Brick", 2)
+                    self.publish_diagnostic(DiagnosticStatus.WARN, "Looking for IMU Brick")
+                    self.ipcon.enumerate()
+                # Compute IMU stuff
                 else:
-                    self.update_config()
-            self.looper_pub.publish(Float32())
+                    if self.last_imu_msg is None or self.getDt(self.last_imu_msg) > self.timeout:
+                        msg = "No data from IMU Brick"
+                        self.log(msg, 2, alert="warn")
+                        self.publish_diagnostic(DiagnosticStatus.ERROR, msg)
+                    else:
+                        self.update_config()
+                self.looper_pub.publish(Float32())
 
-        else:
-            self.log("ROS is not OK", 1, alert="error")
+            else:
+                self.log("ROS is not OK", 1, alert="error")
+        except Exception:
+            print("Wait for thread to close")
+            self.t.join()
+            print("Closed")
             
 
 def main(args=None):
