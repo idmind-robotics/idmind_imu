@@ -2,6 +2,8 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 
 from std_srvs.srv import Trigger
@@ -26,6 +28,10 @@ class IDMindImuBrick(Node):
         node_prefix = self.get_name()+"/"
         self.last_msg = ""
         self.last_msg_ts = self.get_clock().now().to_msg()
+        self.pub_callbacks = ReentrantCallbackGroup()
+        self.srv_callbacks = ReentrantCallbackGroup()
+        self.main_callback_group = ReentrantCallbackGroup()
+
         # Parameters
         self.host = "localhost"
         self.port = 4223
@@ -40,14 +46,14 @@ class IDMindImuBrick(Node):
 
         # Callbacks
         # Services
-        self.create_service(Trigger, node_prefix+"ready", self.report_ready)
+        self.create_service(Trigger, node_prefix+"ready", self.report_ready, callback_group=self.srv_callbacks)
         # Publishers
-        self.imu_pub = self.create_publisher(Imu, node_prefix+"imu", 10)
-        self.temp_pub = self.create_publisher(Temperature, node_prefix+"temperature", 10)
-        self.mag_pub = self.create_publisher(MagneticField, node_prefix+"magnetic_field", 10)
-        self.euler_pub = self.create_publisher(Float32, node_prefix+"euler", 10)
-        self.diag_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
-        self.looper_pub = self.create_publisher(Float32, node_prefix+"timer", 10)
+        self.imu_pub = self.create_publisher(Imu, node_prefix+"imu", 10, callback_group=self.pub_callbacks)
+        self.temp_pub = self.create_publisher(Temperature, node_prefix+"temperature", 10, callback_group=self.pub_callbacks)
+        self.mag_pub = self.create_publisher(MagneticField, node_prefix+"magnetic_field", 10, callback_group=self.pub_callbacks)
+        self.euler_pub = self.create_publisher(Float32, node_prefix+"euler", 10, callback_group=self.pub_callbacks)
+        self.diag_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10, callback_group=self.pub_callbacks)
+        self.looper_pub = self.create_publisher(Float32, node_prefix+"timer", 10, callback_group=self.pub_callbacks)
         # Subscribers
         
         
@@ -60,7 +66,7 @@ class IDMindImuBrick(Node):
         
         # Timers
         self.last_imu_msg = None
-        self.main_loop_timer = self.create_timer(1.0/self.control_freq, self.main_loop)
+        self.main_loop_timer = self.create_timer(1.0/self.control_freq, self.main_loop, callback_group=self.main_callback_group))
         
         self.ready = True
         self.log("Node is initialized.", 2)
