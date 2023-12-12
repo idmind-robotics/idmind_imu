@@ -336,10 +336,18 @@ class IDMindImuBrick(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    imu_node = IDMindImuBrick()
-    rclpy.spin(imu_node)
-    imu_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        imu_node = IDMindImuBrick()    
+        executor = MultiThreadedExecutor(num_threads=6)
+        executor.add_node(imu_node)
+        try:
+            executor.spin()
+        finally:
+            executor.shutdown()
+            imu_node.shutdown()
+            imu_node.destroy_node()
+    finally:
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
