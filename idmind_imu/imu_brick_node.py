@@ -66,7 +66,7 @@ class IDMindImuBrick(Node):
         
         # Timers
         self.last_imu_msg = None
-        self.main_loop_timer = self.create_timer(1.0/self.control_freq, self.main_loop, callback_group=self.main_callback_group))
+        self.main_loop_timer = self.create_timer(1.0/self.control_freq, self.main_loop, callback_group=self.main_callback_group)
         
         self.ready = True
         self.log("Node is initialized.", 2)
