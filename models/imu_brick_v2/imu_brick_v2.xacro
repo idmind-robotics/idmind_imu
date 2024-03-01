@@ -14,7 +14,7 @@
         <xacro:property name="imu_width" value="0.031" />
         <xacro:property name="imu_length" value="0.031" />
         <xacro:property name="imu_mass" value="0.010" />
-        <link name="${prefix}/${imu_name}">
+        <link name="${prefix}${imu_name}">
             <visual>
                 <geometry>
                     <mesh filename="file:///home/cneves/ros2_youship/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.dae" /> <!--scale="0.001 0.001 0.001"/-->
@@ -34,21 +34,21 @@
                 <origin rpy="0 0 0" xyz="0 0 0"/>
             </inertial>
         </link>
-        <joint name="base_to_${imu_name}" type="fixed">
-            <parent link="${parent}"/>
-            <child link="${prefix}/${imu_name}"/>
+        <joint name="${prefix}${parent}_to_${imu_name}" type="fixed">
+            <parent link="${prefix}${parent}"/>
+            <child link="${prefix}${imu_name}"/>
             <xacro:insert_block name="xyz" />
         </joint>
-        <gazebo reference="${prefix}/${imu_name}">
+        <gazebo reference="${prefix}${imu_name}">
             <material>Gazebo/Black</material>
             <gravity>true</gravity>
             <sensor name="${prefix}_imu_sensor" type="imu">
                 <always_on>true</always_on>
                 <update_rate>25</update_rate>
                 <visualize>false</visualize>
-                <topic>${prefix}/imu</topic>
-                <gz_frame_id>${prefix}/imu</gz_frame_id>
-                <ignition_frame_id>${prefix}/imu</ignition_frame_id>
+                <topic>${prefix}imu</topic>
+                <gz_frame_id>${prefix}imu</gz_frame_id>
+                <ignition_frame_id>${prefix}imu</ignition_frame_id>
                 <imu>
                 <angular_velocity>
                     <x>
