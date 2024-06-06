@@ -9,7 +9,7 @@
     </xacro:macro>
 
     <!-- TINKERFORGE IMU BRICK V2 -->
-    <xacro:macro name="imu_brick_v2" params="imu_name parent prefix *xyz">
+    <xacro:macro name="imu_brick_v2" params="imu_name parent prefix imu_topic:='imu_node/imu' *xyz">
         <xacro:property name="imu_height" value="0.01" />
         <xacro:property name="imu_width" value="0.031" />
         <xacro:property name="imu_length" value="0.031" />
@@ -17,7 +17,8 @@
         <link name="${prefix}${imu_name}">
             <visual>
                 <geometry>
-                    <mesh filename="package://idmind_imu/models/imu_brick_v2/imu_brick_v2.dae" /> <!--scale="0.001 0.001 0.001"/-->
+                    <!-- <mesh filename="package://idmind_imu/models/imu_brick_v2/imu_brick_v2.stl" scale="1 1 1"/> -->
+                    <mesh filename="/home/cneves/ros2_harmony/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.stl" scale="1 1 1"/>
                 </geometry>
                 <material name="black" />
 	            <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -42,13 +43,13 @@
         <gazebo reference="${prefix}${imu_name}">
             <material>Gazebo/Black</material>
             <gravity>true</gravity>
-            <sensor name="${prefix}_imu_sensor" type="imu">
+            <sensor name="${prefix}imu_sensor" type="imu">
                 <always_on>true</always_on>
                 <update_rate>25</update_rate>
                 <visualize>false</visualize>
-                <topic>${prefix}imu</topic>
+                <topic>${prefix}${imu_topic}</topic>
                 <gz_frame_id>${prefix}imu</gz_frame_id>
-                <ignition_frame_id>${prefix}imu</ignition_frame_id>
+                <!-- <ignition_frame_id>${prefix}imu</ignition_frame_id> -->
                 <imu>
                 <angular_velocity>
                     <x>
