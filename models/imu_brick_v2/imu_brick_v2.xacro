@@ -17,8 +17,7 @@
         <link name="${prefix}${imu_name}">
             <visual>
                 <geometry>
-                    <!-- <mesh filename="package://idmind_imu/models/imu_brick_v2/imu_brick_v2.stl" scale="1 1 1"/> -->
-                    <mesh filename="/home/cneves/ros2_harmony/src/idmind_imu/models/imu_brick_v2/imu_brick_v2.stl"  scale="1 1 1" />
+                    <mesh filename="package://idmind_imu/models/imu_brick_v2/imu_brick_v2.stl"  scale="1 1 1" />
                 </geometry>
                 <material name="red" />
 	            <origin rpy="0 0 0" xyz="0 0 0"/>
