@@ -259,6 +259,13 @@ class IDMindImuBrick(Node):
     ###################
     #    MAIN LOOP    #
     ###################
+    def shutdown(self):
+        try:
+            pass
+        except Exception:
+            pass
+        return True
+
     def connect_brick_daemon(self):
         """ Non-blocking method to connect to BrickDaemon """
         # IPConnection.connect() is blocking, so call on different thread
