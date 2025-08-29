@@ -18,6 +18,7 @@ from tinkerforge.brick_imu_v2 import BrickIMUV2
 # Other py Packages
 import threading
 import numpy as np
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
 
 class IDMindImuBrick(Node):
@@ -150,15 +151,27 @@ class IDMindImuBrick(Node):
             imu_msg.header.stamp = self.get_clock().now().to_msg()
             imu_msg.header.frame_id = self.imu_frame
             # Quaternion Orientation
-            imu_msg.orientation.w = quat[0]/16383.0
-            imu_msg.orientation.x = quat[1]/16383.0
-            imu_msg.orientation.y = quat[2]/16383.0
-            imu_msg.orientation.z = quat[3]/16383.0
-
+            q = [quat[1]/16383.0, quat[2]/16383.0, quat[3]/16383.0, quat[0]/16383.0]
+            [r, p, y] = euler_from_quaternion(q)
+            # print("R: {} | P: {} | Y: {} ".format(r, p, y))
+            # q2 = quaternion_from_euler(r, p, y)
+            
+            # msg = "====Q====\n"
+            # msg += "{} | {}\n".format(q[1], q2[0])
+            # msg += "{} | {}\n".format(q[2], q2[1])
+            # msg += "{} | {}\n".format(q[3], q2[2])
+            # msg += "{} | {}\n".format(q[0], q2[3])
+            # print(msg)
+            
+            imu_msg.orientation.x = q[0]
+            imu_msg.orientation.y = q[1]
+            imu_msg.orientation.z = q[2]
+            imu_msg.orientation.w = q[3]
+            
             imu_msg.orientation_covariance = [
-            0.001, 0.0, 0.0,
-            0.0, 0.001, 0.0,
-            0.0, 0.0, 0.001
+            1e-4, 0.0, 0.0,
+            0.0, 1e-4, 0.0,
+            0.0, 0.0, 1e-4
             ]
 
             # Angular Velocity - noise 0.3deg/s, 3% cross axis
@@ -196,9 +209,10 @@ class IDMindImuBrick(Node):
             self.imu_pub.publish(imu_msg)
             self.temp_pub.publish(tmsg)
             self.mag_pub.publish(mag_msg)
-            y = euler[0]/16.0
-            r = euler[1]/16.0
-            p = euler[2]/16.0
+            # y = euler[0]/16.0
+            # r = euler[1]/16.0
+            # p = euler[2]/16.0
+            # print(quaternion_from_euler(r,p,y))
             # self.euler_pub.publish("Roll: {} | Pitch: {} | Yaw: {}".format(r, p, y))
             msg = Float32()
             msg.data = y
