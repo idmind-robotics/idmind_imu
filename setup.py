@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'imu_brick_node = idmind_imu.imu_brick_node:main',
+            'imu_brick_node_v2 = idmind_imu.imu_brick_node_v2:main',
         ],
     },
 )
