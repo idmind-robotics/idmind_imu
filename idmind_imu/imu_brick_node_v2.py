@@ -105,6 +105,7 @@ class IDMindImuBrick(Node):
         self.ipcon.register_callback(IPConnection.CALLBACK_DISCONNECTED, self.brick_daemon_disconnection)
 
         self.last_imu_msg = None
+        self.in_loop = False
         self.main_loop_timer = self.create_timer(
             1.0 / self.control_freq, self.main_loop,
             callback_group=self.main_callback_group
@@ -256,8 +257,14 @@ class IDMindImuBrick(Node):
             gravity_msg.vector.z = gravity[2] / 100.0
 
             # --- Calibration status [sys, gyro, acc, mag], each 0–3 ---
+            # calibration_status is a uint8 bitmask: bits[7:6]=sys,[5:4]=gyro,[3:2]=acc,[1:0]=mag
+            cal_sys  = (calibration_status >> 6) & 0x03
+            cal_gyro = (calibration_status >> 4) & 0x03
+            cal_acc  = (calibration_status >> 2) & 0x03
+            cal_mag  = (calibration_status >> 0) & 0x03
+            calib_list = [cal_sys, cal_gyro, cal_acc, cal_mag]
             calib_msg = UInt8MultiArray()
-            calib_msg.data = list(calibration_status)
+            calib_msg.data = calib_list
 
             # Publish all
             self.imu_pub.publish(imu_msg)
@@ -273,11 +280,11 @@ class IDMindImuBrick(Node):
             self.last_imu_msg = self.get_clock().now().to_msg()
 
             # Publish diagnostics — warn if any calibration component is 0
-            if min(calibration_status) == 0:
+            if min(calib_list) == 0:
                 self.publish_diagnostic(
                     DiagnosticStatus.WARN,
                     "IMU partially uncalibrated: sys={} gyro={} acc={} mag={}".format(
-                        *calibration_status)
+                        *calib_list)
                 )
             else:
                 self.publish_diagnostic(DiagnosticStatus.OK, "IMU is OK")
@@ -401,8 +408,13 @@ class IDMindImuBrick(Node):
 
     def main_loop(self):
         try:
+            if self.in_loop:
+                return True
+            self.in_loop = True
+            
             if not rclpy.ok():
                 self.log("ROS is not OK", 1, alert="error")
+                self.in_loop = False
                 return
 
             conn_state = self.ipcon.get_connection_state()
@@ -431,11 +443,13 @@ class IDMindImuBrick(Node):
                         self.update_config()
 
             self.looper_pub.publish(Float32())
+            self.in_loop = False
 
         except Exception as err:
             self.log("Exception in main_loop: {}".format(err), 1, alert="error")
             if self.t is not None and self.t.is_alive():
                 self.t.join(timeout=2.0)
+            self.in_loop = False
 
 
 def main(args=None):

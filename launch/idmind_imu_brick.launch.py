@@ -15,7 +15,7 @@ def generate_launch_description():
     
     imu_node = Node(
         package='idmind_imu',
-        executable='imu_brick_node',
+        executable='imu_brick_node_v2',
         name='idmind_imu',
         output='screen',
         emulate_tty=True,
