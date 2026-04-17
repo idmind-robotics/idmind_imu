@@ -62,7 +62,7 @@ class IDMindImuBrick(Node):
             ParameterDescriptor(description="Timeout for IMU Error")
         ).get_parameter_value().double_value
         self.auto_reconnect = self.declare_parameter(
-            "auto_reconnect", True,
+            "auto_reconnect", False,
             ParameterDescriptor(description="Enable TinkerForge library auto-reconnect")
         ).get_parameter_value().bool_value
         self.add_on_set_parameters_callback(self.update_parameters)
@@ -73,6 +73,8 @@ class IDMindImuBrick(Node):
         self._last_config_update = 0.0
         # Holds the one-shot timer used to delay config after enumeration
         self._config_timer = None
+        # Flag to gracefully stop the main loop during shutdown
+        self._shutdown_in_progress = False
 
         # Services
         self.create_service(Trigger, node_prefix + "ready", self.report_ready,
@@ -335,10 +337,30 @@ class IDMindImuBrick(Node):
 
     def shutdown(self):
         """Disconnect from BrickDaemon and clean up the connection thread."""
+        # Signal the main_loop to exit immediately
+        self._shutdown_in_progress = True
+
+        # Cancel the main loop timer to stop callbacks from firing during shutdown
+        try:
+            self.main_loop_timer.cancel()
+        except Exception:
+            pass
+
+        # Cancel any pending config timer
+        if self._config_timer is not None:
+            try:
+                self._config_timer.cancel()
+            except Exception:
+                pass
+            self._config_timer = None
+
+        # Disconnect from BrickDaemon
         try:
             self.ipcon.disconnect()
         except Exception as err:
             self.log("Exception during shutdown: {}".format(err), 1, alert="error")
+
+        # Wait for the connection thread to finish
         if self.t is not None and self.t.is_alive():
             self.t.join(timeout=2.0)
         return True
@@ -352,13 +374,21 @@ class IDMindImuBrick(Node):
         if self.t is not None and self.t.is_alive():
             return False  # Already connecting
         self.t = threading.Thread(
-            target=self.ipcon.connect,
+            target=self._connect_with_exception_handling,
             name="connect_brick_daemon",
-            args=(self.host, self.port)
         )
         self.t.daemon = True
         self.t.start()
         return True
+
+    def _connect_with_exception_handling(self):
+        """Wrapper for ipcon.connect() that handles exceptions gracefully."""
+        try:
+            self.ipcon.connect(self.host, self.port)
+        except Exception:
+            # Connection failed (expected if daemon isn't running).
+            # The main_loop will retry on next iteration.
+            pass
 
     def update_config(self):
         """Read current IMU config and apply any pending parameter changes.
@@ -408,14 +438,15 @@ class IDMindImuBrick(Node):
 
     def main_loop(self):
         try:
+            # Exit early if shutdown has been initiated
+            if self._shutdown_in_progress or not rclpy.ok():
+                if self.main_loop_timer is not None:
+                    self.main_loop_timer.cancel()
+                return
+
             if self.in_loop:
                 return True
             self.in_loop = True
-            
-            if not rclpy.ok():
-                self.log("ROS is not OK", 1, alert="error")
-                self.in_loop = False
-                return
 
             conn_state = self.ipcon.get_connection_state()
 
@@ -449,6 +480,7 @@ class IDMindImuBrick(Node):
             self.log("Exception in main_loop: {}".format(err), 1, alert="error")
             if self.t is not None and self.t.is_alive():
                 self.t.join(timeout=2.0)
+            self.shutdown()
             self.in_loop = False
 
 
