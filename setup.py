@@ -17,7 +17,7 @@ setup(
         (os.path.join('share', package_name, 'models', 'imu_razor'), glob('models/imu_razor/*.*')),
         (os.path.join('share', package_name, 'models', 'imu_brick_v2'), glob('models/imu_brick_v2/*.*')),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'tinkerforge'],
     zip_safe=True,
     maintainer='Carlos Neves',
     maintainer_email='cneves@idmind.pt',

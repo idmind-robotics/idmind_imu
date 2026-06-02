@@ -6,9 +6,18 @@
   <description>IDMinds package to handle IMUs on robots</description>
   <maintainer email="cneves@idmind.pt">Carlos Neves</maintainer>
   <license>Apache-2.0</license>
-  
+
   <depend>rclpy</depend>
-  <exec_depend>ros2launch</exec_depend>   
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>tf_transformations</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-transforms3d</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
