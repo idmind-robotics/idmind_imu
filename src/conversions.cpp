@@ -106,6 +106,29 @@ Covariance diagonal_covariance(double var_x, double var_y, double var_z)
   };
 }
 
+Covariance scaled_covariance(
+  const std::array<double, 3> & stddev,
+  const std::optional<Calibration> & calibration,
+  CalibrationAxis axis)
+{
+  // Same reasoning as orientation_covariance: a non-positive or NaN stddev must report
+  // "unknown" rather than collapse to an all-zero matrix meaning "perfectly certain".
+  for (double s : stddev) {
+    if (!(s > 0.0)) {
+      return Covariance{-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    }
+  }
+
+  const size_t index = static_cast<size_t>(axis);
+  const uint8_t level = calibration.has_value() ? (*calibration)[index] : 0;
+  const double factor = calibration_variance_factor(level);
+
+  return diagonal_covariance(
+    stddev[0] * stddev[0] * factor,
+    stddev[1] * stddev[1] * factor,
+    stddev[2] * stddev[2] * factor);
+}
+
 Covariance orientation_covariance(
   int fusion_mode,
   const std::optional<Calibration> & calibration,

@@ -14,3 +14,9 @@
     acceleration_source: "linear"
     orientation_stddev: 0.01
     temperature_stddev: 0.0
+    # Per-axis (x, y, z) base stddev at full calibration. Each is scaled up as the matching
+    # BNO-055 calibration level (gyro / acc / mag) drops, so covariance shrinks as the sensor
+    # warms up. Defaults match the values that used to be hardcoded.
+    angular_velocity_stddev: [0.005236, 0.005236, 0.005236]
+    linear_acceleration_stddev: [0.1, 0.1, 0.2236068]
+    magnetic_field_stddev: [6.0e-7, 6.0e-7, 6.0e-7]

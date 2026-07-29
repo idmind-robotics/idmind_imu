@@ -24,6 +24,7 @@
 #include "idmind_imu/conversions.hpp"
 
 using idmind_imu::conversions::Calibration;
+using idmind_imu::conversions::CalibrationAxis;
 using idmind_imu::conversions::acceleration_from_brick;
 using idmind_imu::conversions::angular_velocity_from_brick;
 using idmind_imu::conversions::decode_calibration;
@@ -33,6 +34,7 @@ using idmind_imu::conversions::kYawDriftFactor;
 using idmind_imu::conversions::magnetic_field_from_brick;
 using idmind_imu::conversions::orientation_covariance;
 using idmind_imu::conversions::quaternion_from_brick;
+using idmind_imu::conversions::scaled_covariance;
 
 namespace
 {
@@ -206,6 +208,69 @@ TEST(Conversions, OrientationCovarianceIsNeverAllZero)
         EXPECT_FALSE(all_zero)
           << "all-zero covariance for fusion_mode=" << fusion_mode
           << " sys=" << static_cast<int>(sys) << " stddev=" << stddev;
+      }
+    }
+  }
+}
+
+TEST(Conversions, ScaledCovarianceUsesItsOwnCalibrationAxis)
+{
+  // Distinct levels per axis prove each sensor is keyed on its own calibration entry, not on
+  // the system level: (sys, gyro, acc, mag) = (3, 2, 1, 0) must give three different factors.
+  const Calibration calibration{3, 2, 1, 0};
+  const std::array<double, 3> stddev{1.0, 1.0, 1.0};
+
+  const auto gyro = scaled_covariance(stddev, calibration, CalibrationAxis::Gyroscope);
+  const auto acc = scaled_covariance(stddev, calibration, CalibrationAxis::Accelerometer);
+  const auto mag = scaled_covariance(stddev, calibration, CalibrationAxis::Magnetometer);
+
+  EXPECT_DOUBLE_EQ(gyro[0], 4.0);    // gyro level 2 -> factor 4
+  EXPECT_DOUBLE_EQ(acc[0], 25.0);    // acc  level 1 -> factor 25
+  EXPECT_DOUBLE_EQ(mag[0], 100.0);   // mag  level 0 -> factor 100
+}
+
+TEST(Conversions, ScaledCovarianceShrinksAsCalibrationImproves)
+{
+  const std::array<double, 3> stddev{0.01, 0.01, 0.01};
+  const auto worst = scaled_covariance(stddev, Calibration{0, 0, 0, 0}, CalibrationAxis::Gyroscope);
+  const auto best = scaled_covariance(stddev, Calibration{0, 3, 0, 0}, CalibrationAxis::Gyroscope);
+  EXPECT_LT(best[0], worst[0]);
+  EXPECT_DOUBLE_EQ(best[0], 0.01 * 0.01);
+}
+
+TEST(Conversions, ScaledCovarianceIsPerAxis)
+{
+  // A different stddev per axis must land on its own diagonal slot, off-diagonals still zero.
+  const auto cov = scaled_covariance(
+    {1.0, 2.0, 3.0}, Calibration{3, 3, 3, 3}, CalibrationAxis::Accelerometer);
+  EXPECT_DOUBLE_EQ(cov[0], 1.0);
+  EXPECT_DOUBLE_EQ(cov[4], 4.0);
+  EXPECT_DOUBLE_EQ(cov[8], 9.0);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, ScaledCovarianceNoCalibrationIsWorstCase)
+{
+  const auto none = scaled_covariance({1.0, 1.0, 1.0}, std::nullopt, CalibrationAxis::Gyroscope);
+  EXPECT_DOUBLE_EQ(none[0], 100.0);
+}
+
+TEST(Conversions, ScaledCovarianceIsNeverAllZero)
+{
+  // Same guarantee as orientation_covariance: no reachable input may produce a matrix that a
+  // consumer would read as "perfectly certain".
+  const auto axes = {
+    CalibrationAxis::Gyroscope, CalibrationAxis::Accelerometer, CalibrationAxis::Magnetometer};
+  for (auto axis : axes) {
+    for (uint8_t level = 0; level <= 3; ++level) {
+      for (double s : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN(), 1e-9, 1.0}) {
+        const Calibration calibration{level, level, level, level};
+        const auto cov = scaled_covariance({s, s, s}, calibration, axis);
+        const bool all_zero = std::all_of(
+          cov.begin(), cov.end(), [](double v) {return v == 0.0;});
+        EXPECT_FALSE(all_zero) << "all-zero covariance for stddev=" << s;
       }
     }
   }

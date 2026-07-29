@@ -48,6 +48,34 @@ std::string two_decimals(double value)
   return std::string(buffer);
 }
 
+/// Convert a 3-element parameter vector to a fixed array, or throw if the length is wrong.
+std::array<double, 3> to_stddev_array(const std::vector<double> & values, const char * name)
+{
+  if (values.size() != 3) {
+    throw std::invalid_argument(
+            std::string(name) + " must have exactly 3 elements (x, y, z), got " +
+            std::to_string(values.size()));
+  }
+  return std::array<double, 3>{values[0], values[1], values[2]};
+}
+
+/// Parse a 3-element stddev parameter into \p target.
+///
+/// Fills \p result and returns false when the length is wrong, so the caller can bail out.
+bool assign_stddev(
+  const rclcpp::Parameter & parameter, std::array<double, 3> & target,
+  rcl_interfaces::msg::SetParametersResult & result)
+{
+  const auto & values = parameter.as_double_array();
+  if (values.size() != 3) {
+    result.successful = false;
+    result.reason = parameter.get_name() + " must have exactly 3 elements (x, y, z)";
+    return false;
+  }
+  target = std::array<double, 3>{values[0], values[1], values[2]};
+  return true;
+}
+
 /// Seconds between two steady-clock points.
 double seconds_between(
   std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to)
@@ -57,7 +85,15 @@ double seconds_between(
 
 }  // namespace
 
-const double kGyroVariance = (0.3 * M_PI / 180.0) * (0.3 * M_PI / 180.0);
+namespace
+{
+/// 0.3 deg/s in rad/s - the stddev the pre-parameter hardcoded variance was built from.
+const double kGyroStddev = 0.3 * M_PI / 180.0;
+}  // namespace
+
+const std::vector<double> kDefaultAngularVelocityStddev{kGyroStddev, kGyroStddev, kGyroStddev};
+const std::vector<double> kDefaultLinearAccelerationStddev{0.1, 0.1, std::sqrt(0.05)};
+const std::vector<double> kDefaultMagneticFieldStddev{0.6e-6, 0.6e-6, 0.6e-6};
 
 ImuNode::ImuNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("idmind_imu", options)
@@ -98,6 +134,21 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
   temperature_stddev_ = this->declare_parameter<double>(
     "temperature_stddev", 0.0,
     describe("Temperature stddev in degrees Celsius; 0 publishes variance 0 (unknown)"));
+  angular_velocity_stddev_ = to_stddev_array(
+    this->declare_parameter<std::vector<double>>(
+      "angular_velocity_stddev", kDefaultAngularVelocityStddev,
+      describe("Per-axis angular velocity stddev (rad/s), scaled by gyro calibration")),
+    "angular_velocity_stddev");
+  linear_acceleration_stddev_ = to_stddev_array(
+    this->declare_parameter<std::vector<double>>(
+      "linear_acceleration_stddev", kDefaultLinearAccelerationStddev,
+      describe("Per-axis linear acceleration stddev (m/s^2), scaled by accel calibration")),
+    "linear_acceleration_stddev");
+  magnetic_field_stddev_ = to_stddev_array(
+    this->declare_parameter<std::vector<double>>(
+      "magnetic_field_stddev", kDefaultMagneticFieldStddev,
+      describe("Per-axis magnetic field stddev (tesla), scaled by mag calibration")),
+    "magnetic_field_stddev");
 
   if (control_freq_ <= 0.0) {
     throw std::invalid_argument("control_freq must be > 0");
@@ -186,6 +237,9 @@ ImuNode::PublishParams ImuNode::publish_params_locked() const
   params.imu_frame = imu_frame_;
   params.orientation_stddev = orientation_stddev_;
   params.temperature_stddev = temperature_stddev_;
+  params.angular_velocity_stddev = angular_velocity_stddev_;
+  params.linear_acceleration_stddev = linear_acceleration_stddev_;
+  params.magnetic_field_stddev = magnetic_field_stddev_;
   return params;
 }
 
@@ -284,6 +338,18 @@ rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
         return result;
       }
       temperature_stddev_ = parameter.as_double();
+    } else if (name == "angular_velocity_stddev") {
+      if (!assign_stddev(parameter, angular_velocity_stddev_, result)) {
+        return result;
+      }
+    } else if (name == "linear_acceleration_stddev") {
+      if (!assign_stddev(parameter, linear_acceleration_stddev_, result)) {
+        return result;
+      }
+    } else if (name == "magnetic_field_stddev") {
+      if (!assign_stddev(parameter, magnetic_field_stddev_, result)) {
+        return result;
+      }
     }
   }
 
@@ -339,7 +405,7 @@ void ImuNode::on_sample(const ImuSample & sample)
   }
 
   if (sample.magnetic_field.has_value()) {
-    publish_magnetic_field(stamp, *sample.magnetic_field, params);
+    publish_magnetic_field(stamp, *sample.magnetic_field, sample.calibration, params);
   }
 
   if (sample.euler.has_value()) {
@@ -381,16 +447,18 @@ void ImuNode::publish_imu(
     msg.angular_velocity.y = (*sample.angular_velocity)[1];
     msg.angular_velocity.z = (*sample.angular_velocity)[2];
   }
-  msg.angular_velocity_covariance =
-    conversions::diagonal_covariance(kGyroVariance, kGyroVariance, kGyroVariance);
+  msg.angular_velocity_covariance = conversions::scaled_covariance(
+    params.angular_velocity_stddev, sample.calibration,
+    conversions::CalibrationAxis::Gyroscope);
 
   if (sample.linear_acceleration.has_value()) {
     msg.linear_acceleration.x = (*sample.linear_acceleration)[0];
     msg.linear_acceleration.y = (*sample.linear_acceleration)[1];
     msg.linear_acceleration.z = (*sample.linear_acceleration)[2];
   }
-  msg.linear_acceleration_covariance = conversions::diagonal_covariance(
-    kAccelVarianceX, kAccelVarianceY, kAccelVarianceZ);
+  msg.linear_acceleration_covariance = conversions::scaled_covariance(
+    params.linear_acceleration_stddev, sample.calibration,
+    conversions::CalibrationAxis::Accelerometer);
 
   imu_pub_->publish(msg);
 }
@@ -410,6 +478,7 @@ void ImuNode::publish_temperature(
 
 void ImuNode::publish_magnetic_field(
   const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field,
+  const std::optional<conversions::Calibration> & calibration,
   const PublishParams & params)
 {
   sensor_msgs::msg::MagneticField msg;
@@ -418,8 +487,8 @@ void ImuNode::publish_magnetic_field(
   msg.magnetic_field.x = magnetic_field[0];
   msg.magnetic_field.y = magnetic_field[1];
   msg.magnetic_field.z = magnetic_field[2];
-  msg.magnetic_field_covariance =
-    conversions::diagonal_covariance(kMagVariance, kMagVariance, kMagVariance);
+  msg.magnetic_field_covariance = conversions::scaled_covariance(
+    params.magnetic_field_stddev, calibration, conversions::CalibrationAxis::Magnetometer);
   mag_pub_->publish(msg);
 }
 

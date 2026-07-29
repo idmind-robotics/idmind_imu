@@ -71,8 +71,35 @@ std::array<double, 3> magnetic_field_from_brick(const std::array<int16_t, 3> & v
 /// Convert brick angular_velocity counts to rad/s.
 std::array<double, 3> angular_velocity_from_brick(const std::array<int16_t, 3> & vec);
 
+/// Which calibration level scales a given sensor's covariance.
+///
+/// The BNO-055 reports four independent levels in every sample; each sensor's covariance is
+/// scaled by its own, not by the system level.
+enum class CalibrationAxis
+{
+  System = 0,
+  Gyroscope = 1,
+  Accelerometer = 2,
+  Magnetometer = 3,
+};
+
 /// Build a row-major 3x3 covariance matrix with exactly-zero off-diagonal terms.
 Covariance diagonal_covariance(double var_x, double var_y, double var_z);
+
+/// Build a per-axis covariance from \p stddev, scaled by one calibration level.
+///
+/// The variance for each axis is ``stddev[i] ** 2`` multiplied by the same factor table
+/// ``orientation_covariance`` uses, keyed on the calibration level named by \p axis: worse
+/// calibration means a larger, more honest variance. A disengaged \p calibration is treated
+/// as worst case.
+///
+/// If any element of \p stddev is not strictly positive (or is NaN) the result would be a
+/// matrix a consumer reads as "perfectly certain", so this returns the "no estimate
+/// available" sentinel instead: element 0 is -1.0 and the rest 0.0.
+Covariance scaled_covariance(
+  const std::array<double, 3> & stddev,
+  const std::optional<Calibration> & calibration,
+  CalibrationAxis axis);
 
 /// Build the covariance for sensor_msgs/Imu.orientation_covariance.
 ///

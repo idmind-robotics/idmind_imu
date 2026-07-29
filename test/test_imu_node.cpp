@@ -217,6 +217,82 @@ TEST_F(ImuNodeTest, ImuMessageHasCorrectUnitsFrameAndZeroOffDiagonals)
   }
 }
 
+TEST_F(ImuNodeTest, CovarianceTracksCalibrationRatherThanBeingFixed)
+{
+  // The published covariance must actually respond to the device's calibration levels. Push
+  // an uncalibrated frame then a fully calibrated one and require the matrix to shrink; a
+  // hardcoded matrix would report identical values for both.
+  Harness harness(fake_);
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData uncalibrated;
+  uncalibrated.calibration_status = 0x00;  // every level 0
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(uncalibrated);
+        return imu_messages->size() > 0;
+      },
+      kMessageDeadline)) << "no Imu message received";
+  const auto cold = imu_messages->front();
+
+  auto warm_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  AllData calibrated;
+  calibrated.calibration_status = 0xFF;  // every level 3
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(calibrated);
+        const auto all = warm_messages->all();
+        if (all.empty()) {
+          return false;
+        }
+        return all.back().angular_velocity_covariance[0] <
+        cold.angular_velocity_covariance[0];
+      },
+      kMessageDeadline)) << "covariance did not change with calibration - is it hardcoded?";
+
+  const auto warm = warm_messages->all().back();
+  EXPECT_LT(warm.angular_velocity_covariance[0], cold.angular_velocity_covariance[0]);
+  EXPECT_LT(warm.linear_acceleration_covariance[0], cold.linear_acceleration_covariance[0]);
+  EXPECT_LT(warm.orientation_covariance[0], cold.orientation_covariance[0]);
+  // Fully calibrated means factor 1, so the base stddev comes through unscaled.
+  EXPECT_NEAR(warm.angular_velocity_covariance[0], 0.005236 * 0.005236, 1e-9);
+  EXPECT_NEAR(cold.angular_velocity_covariance[0], 0.005236 * 0.005236 * 100.0, 1e-7);
+}
+
+TEST_F(ImuNodeTest, MagneticFieldCovarianceTracksMagCalibration)
+{
+  Harness harness(fake_);
+  auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData data;
+  data.calibration_status = 0b11111100;  // sys/gyro/acc = 3, mag = 0
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(data);
+        return fields->size() > 0;
+      },
+      kMessageDeadline)) << "no MagneticField message received";
+
+  // mag level 0 -> factor 100 on the 0.6 uT default.
+  EXPECT_NEAR(fields->front().magnetic_field_covariance[0], 0.6e-6 * 0.6e-6 * 100.0, 1e-19);
+}
+
+TEST_F(ImuNodeTest, StddevParameterMustHaveThreeElements)
+{
+  Harness harness(fake_);
+
+  const auto results = harness.node->set_parameters(
+    {rclcpp::Parameter("angular_velocity_stddev", std::vector<double>{1.0, 2.0})});
+  ASSERT_EQ(results.size(), 1u);
+  EXPECT_FALSE(results[0].successful);
+  EXPECT_NE(results[0].reason.find("3 elements"), std::string::npos);
+}
+
 TEST_F(ImuNodeTest, CalibrationTopicPreservesFieldOrder)
 {
   Harness harness(fake_);

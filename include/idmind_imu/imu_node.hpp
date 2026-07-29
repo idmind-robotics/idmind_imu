@@ -23,6 +23,7 @@
 #ifndef IDMIND_IMU__IMU_NODE_HPP_
 #define IDMIND_IMU__IMU_NODE_HPP_
 
+#include <array>
 #include <chrono>
 #include <deque>
 #include <memory>
@@ -45,14 +46,13 @@
 namespace idmind_imu
 {
 
-/// Gyro noise stddev (0.3 deg/s in rad/s), squared, used for angular_velocity_covariance.
-extern const double kGyroVariance;
-/// Linear-acceleration variances (x, y, z).
-constexpr double kAccelVarianceX = 0.01;
-constexpr double kAccelVarianceY = 0.01;
-constexpr double kAccelVarianceZ = 0.05;
-/// Magnetic-field variance, in T^2.
-constexpr double kMagVariance = 0.6e-6 * 0.6e-6;
+/// Default angular-velocity stddev per axis, rad/s. 0.3 deg/s, matching the pre-parameter
+/// hardcoded value, so a config that does not set the parameter behaves as before.
+extern const std::vector<double> kDefaultAngularVelocityStddev;
+/// Default linear-acceleration stddev per axis, m/s^2: sqrt of the old 0.01/0.01/0.05.
+extern const std::vector<double> kDefaultLinearAccelerationStddev;
+/// Default magnetic-field stddev per axis, tesla: the old 0.6 uT.
+extern const std::vector<double> kDefaultMagneticFieldStddev;
 /// Number of recent sample timestamps kept to estimate the observed data rate.
 constexpr size_t kRateWindow = 50;
 
@@ -87,6 +87,9 @@ private:
     std::string imu_frame;
     double orientation_stddev{0.01};
     double temperature_stddev{0.0};
+    std::array<double, 3> angular_velocity_stddev{};
+    std::array<double, 3> linear_acceleration_stddev{};
+    std::array<double, 3> magnetic_field_stddev{};
   };
 
   /// Copy the current publish parameters. Caller must hold ``mutex_``.
@@ -114,6 +117,7 @@ private:
     const rclcpp::Time & stamp, double temperature, const PublishParams & params);
   void publish_magnetic_field(
     const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field,
+    const std::optional<conversions::Calibration> & calibration,
     const PublishParams & params);
   void publish_gravity(
     const rclcpp::Time & stamp, const std::array<double, 3> & gravity,
@@ -147,6 +151,9 @@ private:
   std::string acceleration_source_;
   double orientation_stddev_{0.01};
   double temperature_stddev_{0.0};
+  std::array<double, 3> angular_velocity_stddev_{};
+  std::array<double, 3> linear_acceleration_stddev_{};
+  std::array<double, 3> magnetic_field_stddev_{};
 
   // -- Shared state, guarded by mutex_ (touched by a driver thread and an executor thread) --
 

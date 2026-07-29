@@ -79,6 +79,9 @@ to the driver immediately rather than polled.
 | `acceleration_source` | string | `linear` | `linear` (gravity removed) or `raw` (gravity included) |
 | `orientation_stddev` | double | `0.01` | Base orientation stddev at full calibration |
 | `temperature_stddev` | double | `0.0` | Temperature stddev (°C); `0` (the default) publishes variance `0` = unknown |
+| `angular_velocity_stddev` | double[3] | `[0.005236]*3` | Per-axis gyro stddev (rad/s), scaled by **gyro** calibration |
+| `linear_acceleration_stddev` | double[3] | `[0.1, 0.1, 0.2236]` | Per-axis accel stddev (m/s²), scaled by **acc** calibration |
+| `magnetic_field_stddev` | double[3] | `[6e-7]*3` | Per-axis mag stddev (T), scaled by **mag** calibration |
 
 **Fusion modes:** `0` off (raw data — orientation is meaningless), `1` on with magnetometer
 (absolute heading), `2` on without magnetometer (**relative yaw that drifts** — the default),
@@ -110,6 +113,21 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 ### Covariances
 
 - Off-diagonal terms are always exactly zero — the matrices are strictly diagonal.
+- **No covariance is a fixed matrix.** Each of the four scales with the BNO-055 calibration
+  level for *that* sensor — orientation with `sys`, angular velocity with `gyro`, linear
+  acceleration with `acc`, magnetic field with `mag` — using the factor table below. Expect
+  every covariance to start large and shrink as the device calibrates.
+
+  | Calibration level | Variance multiplier |
+  |---|---|
+  | 3 (fully calibrated) | ×1 |
+  | 2 | ×4 |
+  | 1 | ×25 |
+  | 0 (uncalibrated) | ×100 |
+
+- A stddev of `0`, negative, or `NaN` yields the `-1` sentinel rather than an all-zero matrix.
+  This matters: `sensor_msgs` has no "all zeros means unknown" convention, so a zero matrix
+  tells a consumer the reading is *perfectly certain*.
 - `orientation_covariance[0]` is set to **`-1`** when `imu_fusion_mode` is `0`. That is the
   `sensor_msgs/Imu` convention for "no orientation estimate available", and downstream
   filters check it.
