@@ -1,9 +1,10 @@
 import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from ament_index_python.packages import get_package_share_directory
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -13,7 +14,7 @@ def generate_launch_description():
         get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml'
     )
     imu_cfg = DeclareLaunchArgument(
-        name="imu_cfg", default_value=def_imu_cfg, description="Configuration file for IMU"
+        name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU'
     )
     ld.add_action(imu_cfg)
 
