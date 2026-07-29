@@ -86,6 +86,13 @@ enum class CalibrationAxis
 /// Build a row-major 3x3 covariance matrix with exactly-zero off-diagonal terms.
 Covariance diagonal_covariance(double var_x, double var_y, double var_z);
 
+/// Build a covariance from an already-measured per-axis variance.
+///
+/// Applies the same guard as everything else here: if any element is not strictly positive
+/// (or is NaN) the result would read as "perfectly certain" to a consumer, so this returns
+/// the "no estimate available" sentinel instead - element 0 is -1.0, the rest 0.0.
+Covariance covariance_from_variance(const std::array<double, 3> & variance);
+
 /// Build a per-axis covariance from \p stddev, scaled by one calibration level.
 ///
 /// The variance for each axis is ``stddev[i] ** 2`` multiplied by the same factor table

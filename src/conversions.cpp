@@ -106,6 +106,16 @@ Covariance diagonal_covariance(double var_x, double var_y, double var_z)
   };
 }
 
+Covariance covariance_from_variance(const std::array<double, 3> & variance)
+{
+  for (double v : variance) {
+    if (!(v > 0.0)) {
+      return Covariance{-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    }
+  }
+  return diagonal_covariance(variance[0], variance[1], variance[2]);
+}
+
 Covariance scaled_covariance(
   const std::array<double, 3> & stddev,
   const std::optional<Calibration> & calibration,

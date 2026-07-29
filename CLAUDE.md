@@ -36,6 +36,7 @@ file, never another node.
 ```
 include/idmind_imu/
   conversions.hpp        # pure unit + covariance maths. No ROS, no tinkerforge. Unit tested.
+  noise_estimator.hpp    # sliding-window per-axis variance. Pure, unit tested.
   imu_node.hpp           # ROS node: params, publishers, diagnostics, watchdog. No hardware code.
   drivers/driver.hpp     # ImuDriver ABC, ImuSample, DriverConfig, DriverState
   drivers/registry.hpp   # name -> factory
@@ -118,6 +119,24 @@ thread; shared state is under `mutex_`, and publishing happens outside it. `log(
   `test_brick_v2_driver.ConfigIsAppliedOnceAndNotPolled` is the regression guard.
 - **Covariances come from `conversions::diagonal_covariance`** so off-diagonals are exactly
   zero. The old code used `[x] * 9`, which left garbage cross-terms for `robot_localization`.
+- **Covariance is measured from the live signal**, not looked up. Calibration scaling is only
+  a *fallback*: it is a 4-value step function, so once the device settles the matrix is
+  byte-identical in every message — which is indistinguishable from the hardcoded matrix it
+  replaced. `RollingVariance` is what makes it actually move. Do not "simplify" back to the
+  lookup.
+- **The noise estimate is gated on the robot being still.** A moving IMU's variance measures
+  motion, not noise; publishing it tells a filter to distrust the IMU exactly when it is
+  manoeuvring. `is_stationary_locked` checks gyro magnitude *and* deviation from the window
+  mean acceleration — gyro alone misses straight-line acceleration.
+- **Fallback is per axis, never all-or-nothing.** Angular velocity is quantised to 1/16 °/s,
+  so a still robot really can report an identical value on one axis for a whole window,
+  measuring exactly zero variance there. `blended_covariance` takes the fallback for that axis
+  only. An earlier all-or-nothing version silently reverted the whole matrix to the fixed one.
+- **Variance is computed in two passes, not from running sums of squares.** Linear
+  acceleration has a mean near 9.81 and noise near 1e-3; `E[x^2] - E[x]^2` loses it entirely
+  to cancellation. `test_noise_estimator` pins this case.
+- **Orientation variance wraps.** Euler angles use a circular mean and wrapped deviations, or
+  a yaw near +/- pi reports ~9.87 rad^2 instead of ~1e-6.
 - **`orientation_covariance[0] = -1`** when fusion mode is 0 — the `sensor_msgs/Imu` "no
   orientation" signal. Otherwise variance scales with system calibration, and fusion mode 2
   inflates yaw (relative heading, drifts without the magnetometer).
@@ -125,6 +144,15 @@ thread; shared state is under `mutex_`, and publishing happens outside it. `log(
   compared separately. The old code OR-ed them, which could never converge upward.
 - **Do not add a `tinkerforge` dependency to `package.xml`.** There is no rosdep rule for it;
   the bindings are fetched by CMake precisely so no such dependency is needed.
+
+## The BNO-055 `sys` calibration trap
+
+The `sys` calibration level only rises when the **magnetometer** is in use. In
+`imu_fusion_mode: 2` (the shipped default — fusion without magnetometer) it stays at 0
+forever, so anything keyed on `sys` is pinned at the worst-case ×100 factor permanently. That
+is why the calibration-scaled covariance looked like a fixed matrix in the field, and why the
+live measurement is the primary source rather than the scaling. Diagnosing this is one
+command: `ros2 topic echo /idmind_imu/calibration` and watch the first element.
 
 ## Units (IMU Brick 2.0 — v2, not v1)
 

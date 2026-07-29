@@ -100,6 +100,7 @@ set_property(TARGET tinkerforge_bindings PROPERTY POSITION_INDEPENDENT_CODE ON)
 # ---------------------------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
   src/conversions.cpp
+  src/noise_estimator.cpp
   src/imu_node.cpp
   src/drivers/registry.cpp
   src/drivers/brick_v2.cpp
@@ -172,6 +173,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_conversions test/test_conversions.cpp)
   target_link_libraries(test_conversions ${PROJECT_NAME})
+
+  ament_add_gtest(test_noise_estimator test/test_noise_estimator.cpp)
+  target_link_libraries(test_noise_estimator ${PROJECT_NAME})
 
   ament_add_gtest(test_fake_brickd test/test_fake_brickd.cpp)
   target_link_libraries(test_fake_brickd fake_brickd tinkerforge_bindings)

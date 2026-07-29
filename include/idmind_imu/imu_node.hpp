@@ -35,6 +35,7 @@
 #include "diagnostic_updater/diagnostic_updater.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include "idmind_imu/drivers/driver.hpp"
+#include "idmind_imu/noise_estimator.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/magnetic_field.hpp"
@@ -90,10 +91,30 @@ private:
     std::array<double, 3> angular_velocity_stddev{};
     std::array<double, 3> linear_acceleration_stddev{};
     std::array<double, 3> magnetic_field_stddev{};
+
+    /// Variance measured from the live signal. Disengaged until a window has filled, in which
+    /// case the configured stddev scaled by calibration is published instead.
+    std::optional<std::array<double, 3>> measured_angular_velocity;
+    std::optional<std::array<double, 3>> measured_linear_acceleration;
+    std::optional<std::array<double, 3>> measured_magnetic_field;
+    std::optional<std::array<double, 3>> measured_orientation;
   };
 
-  /// Copy the current publish parameters. Caller must hold ``mutex_``.
+  /// Copy the current publish parameters and noise estimates. Caller must hold ``mutex_``.
   PublishParams publish_params_locked() const;
+
+  /// Feed \p sample into the noise estimators. Caller must hold ``mutex_``.
+  ///
+  /// When ``noise_estimate_when_still`` is set, samples taken while the robot is moving are
+  /// skipped: the variance of a moving IMU is dominated by real motion, not by sensor noise,
+  /// and publishing that would tell a filter to distrust the IMU exactly when it matters.
+  void update_noise_estimators_locked(const ImuSample & sample);
+
+  /// Whether \p sample looks like it was taken at rest. Caller must hold ``mutex_``.
+  bool is_stationary_locked(const ImuSample & sample) const;
+
+  /// Rebuild the estimators after a window-size change. Caller must hold ``mutex_``.
+  void reset_noise_estimators_locked();
 
   /// Build the hardware-relevant config subset from the current parameter values.
   DriverConfig driver_config() const;
@@ -154,6 +175,10 @@ private:
   std::array<double, 3> angular_velocity_stddev_{};
   std::array<double, 3> linear_acceleration_stddev_{};
   std::array<double, 3> magnetic_field_stddev_{};
+  int noise_window_{100};
+  bool noise_estimate_when_still_{true};
+  double stationary_gyro_threshold_{0.02};
+  double stationary_accel_threshold_{0.2};
 
   // -- Shared state, guarded by mutex_ (touched by a driver thread and an executor thread) --
 
@@ -161,6 +186,12 @@ private:
   std::optional<std::chrono::steady_clock::time_point> last_sample_;
   std::optional<conversions::Calibration> last_calibration_;
   std::deque<std::chrono::steady_clock::time_point> sample_times_;
+
+  /// Sliding-window noise estimators, all touched only under mutex_.
+  RollingVariance angular_velocity_noise_{100};
+  RollingVariance linear_acceleration_noise_{100};
+  RollingVariance magnetic_field_noise_{100};
+  RollingVariance orientation_noise_{100, AngleWrap::Radians};
   std::chrono::steady_clock::time_point last_watchdog_{std::chrono::steady_clock::now()};
 
   bool ready_{false};

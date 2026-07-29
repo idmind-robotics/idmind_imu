@@ -20,3 +20,13 @@
     angular_velocity_stddev: [0.005236, 0.005236, 0.005236]
     linear_acceleration_stddev: [0.1, 0.1, 0.2236068]
     magnetic_field_stddev: [6.0e-7, 6.0e-7, 6.0e-7]
+    # Covariance is measured from the live signal over a sliding window of this many samples;
+    # the stddev values above are only the fallback until the first window fills. Set
+    # noise_window below 2 to disable measurement and always use the fallback.
+    noise_window: 100
+    # Variance of a moving IMU is dominated by real motion rather than sensor noise, so the
+    # estimate is only updated while the robot looks stationary; otherwise the last good
+    # estimate is held.
+    noise_estimate_when_still: true
+    stationary_gyro_threshold: 0.02
+    stationary_accel_threshold: 0.2

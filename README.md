@@ -96,6 +96,10 @@ to the driver immediately rather than polled.
 | `angular_velocity_stddev` | double[3] | `[0.005236]*3` | Per-axis gyro stddev (rad/s), scaled by **gyro** calibration |
 | `linear_acceleration_stddev` | double[3] | `[0.1, 0.1, 0.2236]` | Per-axis accel stddev (m/s²), scaled by **acc** calibration |
 | `magnetic_field_stddev` | double[3] | `[6e-7]*3` | Per-axis mag stddev (T), scaled by **mag** calibration |
+| `noise_window` | int | `100` | Samples used to measure covariance from the live signal; `<2` disables |
+| `noise_estimate_when_still` | bool | `true` | Only update the estimate while the robot looks stationary |
+| `stationary_gyro_threshold` | double | `0.02` | Gyro magnitude (rad/s) below which the robot counts as still |
+| `stationary_accel_threshold` | double | `0.2` | Allowed accel deviation (m/s²) from the window mean while still |
 
 **Fusion modes:** `0` off (raw data — orientation is meaningless), `1` on with magnetometer
 (absolute heading), `2` on without magnetometer (**relative yaw that drifts** — the default),
@@ -127,17 +131,37 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 ### Covariances
 
 - Off-diagonal terms are always exactly zero — the matrices are strictly diagonal.
-- **No covariance is a fixed matrix.** Each of the four scales with the BNO-055 calibration
-  level for *that* sensor — orientation with `sys`, angular velocity with `gyro`, linear
-  acceleration with `acc`, magnetic field with `mag` — using the factor table below. Expect
-  every covariance to start large and shrink as the device calibrates.
+- **Covariance is measured from the live signal.** Each axis reports the variance of the last
+  `noise_window` samples, so the matrix changes from message to message rather than being a
+  constant. This is the primary source; the fallbacks below only apply when it is unavailable.
 
-  | Calibration level | Variance multiplier |
-  |---|---|
-  | 3 (fully calibrated) | ×1 |
-  | 2 | ×4 |
-  | 1 | ×25 |
-  | 0 (uncalibrated) | ×100 |
+- **The estimate is only updated while the robot is still.** A moving IMU's variance is
+  dominated by real motion, not sensor noise, and publishing that would tell a filter to
+  distrust the IMU exactly when it is manoeuvring. While moving, the last good estimate is
+  held. Set `noise_estimate_when_still: false` to track the raw signal unconditionally.
+
+- **Fallback chain**, applied per axis, so a single silent axis never discards a good
+  measurement on the other two:
+  1. measured variance, once the window has filled and that axis is non-zero;
+  2. otherwise the configured `*_stddev`, scaled by the BNO-055 calibration level for *that*
+     sensor — orientation with `sys`, angular velocity with `gyro`, linear acceleration with
+     `acc`, magnetic field with `mag`:
+
+     | Calibration level | Variance multiplier |
+     |---|---|
+     | 3 (fully calibrated) | ×1 |
+     | 2 | ×4 |
+     | 1 | ×25 |
+     | 0 (uncalibrated) | ×100 |
+
+  3. `imu_fusion_mode: 0` always overrides both for orientation, with the `-1` sentinel.
+
+  > Note the BNO-055 only raises its **`sys`** calibration when the magnetometer is in use. In
+  > `imu_fusion_mode: 2` (the default, no magnetometer) `sys` stays at 0 permanently, so that
+  > fallback is pinned at ×100 — which is why measuring from the signal matters.
+
+- **Yaw wrapping is handled.** Orientation variance uses a circular mean and wrapped
+  deviations, so a yaw sitting near ±π does not report a fake variance of ~9.87 rad².
 
 - A stddev of `0`, negative, or `NaN` yields the `-1` sentinel rather than an all-zero matrix.
   This matters: `sensor_msgs` has no "all zeros means unknown" convention, so a zero matrix

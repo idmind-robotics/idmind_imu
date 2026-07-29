@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -217,12 +218,108 @@ TEST_F(ImuNodeTest, ImuMessageHasCorrectUnitsFrameAndZeroOffDiagonals)
   }
 }
 
+TEST_F(ImuNodeTest, CovarianceIsMeasuredFromTheLiveSignal)
+{
+  // The whole point of the noise estimator: with a varying signal the published covariance
+  // must differ between messages. A calibration-scaled matrix is a 4-value step function and
+  // would be byte-identical in every message, which is what "fixed matrix" meant.
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 8),
+      rclcpp::Parameter("noise_estimate_when_still", false)});
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  // Feed a noisy gyro signal, one distinct value per push.
+  int tick = 0;
+  const bool got_enough = wait_until(
+    [&] {
+      AllData data;
+      const int16_t jitter = static_cast<int16_t>((tick % 7) - 3);
+      data.angular_velocity = {static_cast<int16_t>(16 + jitter), jitter, 0};
+      data.linear_acceleration = {static_cast<int16_t>(100 + jitter), 0, 0};
+      data.calibration_status = 0xFF;  // pinned, so calibration cannot explain any change
+      ++tick;
+      fake_.push_all_data(data);
+      return imu_messages->size() >= 40;
+    },
+    kMessageDeadline);
+  ASSERT_TRUE(got_enough) << "not enough Imu messages";
+
+  const auto all = imu_messages->all();
+  bool covariance_changed = false;
+  double first_seen = -1.0;
+  for (const auto & msg : all) {
+    const double value = msg.angular_velocity_covariance[0];
+    if (value <= 0.0) {
+      continue;  // still on the fallback before the first window filled
+    }
+    if (first_seen < 0.0) {
+      first_seen = value;
+    } else if (std::fabs(value - first_seen) > 1e-12) {
+      covariance_changed = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(covariance_changed)
+    << "angular_velocity_covariance never changed across " << all.size()
+    << " messages - it is still a fixed matrix";
+}
+
+TEST_F(ImuNodeTest, MeasuredCovarianceNeverCollapsesToZero)
+{
+  // A perfectly constant signal has zero measured variance, which must NOT be published as an
+  // all-zero matrix - that reads as "perfectly certain". It has to fall back to the sentinel.
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 4),
+      rclcpp::Parameter("noise_estimate_when_still", false)});
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData constant;
+  constant.angular_velocity = {16, 0, 0};
+  constant.calibration_status = 0xFF;
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(constant);
+        return imu_messages->size() >= 20;
+      },
+      kMessageDeadline)) << "not enough Imu messages";
+
+  for (const auto & msg : imu_messages->all()) {
+    const auto & cov = msg.angular_velocity_covariance;
+    const bool all_zero = std::all_of(cov.begin(), cov.end(), [](double v) {return v == 0.0;});
+    EXPECT_FALSE(all_zero) << "published an all-zero covariance meaning 'perfectly certain'";
+    // A quiet signal falls back to the configured stddev rather than the unknown sentinel.
+    EXPECT_GT(cov[0], 0.0);
+  }
+}
+
+TEST_F(ImuNodeTest, NoiseWindowBelowTwoFallsBackToConfiguredStddev)
+{
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 0)});
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData data;
+  data.calibration_status = 0xFF;  // fully calibrated -> factor 1, so the bare stddev squared
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(data);
+        return imu_messages->size() >= 5;
+      },
+      kMessageDeadline)) << "no Imu messages";
+
+  EXPECT_NEAR(
+    imu_messages->all().back().angular_velocity_covariance[0], 0.005236 * 0.005236, 1e-9);
+}
+
 TEST_F(ImuNodeTest, CovarianceTracksCalibrationRatherThanBeingFixed)
 {
   // The published covariance must actually respond to the device's calibration levels. Push
   // an uncalibrated frame then a fully calibrated one and require the matrix to shrink; a
-  // hardcoded matrix would report identical values for both.
-  Harness harness(fake_);
+  // hardcoded matrix would report identical values for both. noise_window 0 pins this to the
+  // calibration path so the live estimator cannot mask what is being tested.
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 0)});
   auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 
@@ -264,7 +361,7 @@ TEST_F(ImuNodeTest, CovarianceTracksCalibrationRatherThanBeingFixed)
 
 TEST_F(ImuNodeTest, MagneticFieldCovarianceTracksMagCalibration)
 {
-  Harness harness(fake_);
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 0)});
   auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 

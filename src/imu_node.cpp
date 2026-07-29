@@ -24,6 +24,7 @@
 
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "idmind_imu/drivers/registry.hpp"
+#include "idmind_imu/noise_estimator.hpp"
 #include "rclcpp/version.h"
 
 namespace idmind_imu
@@ -57,6 +58,36 @@ std::array<double, 3> to_stddev_array(const std::vector<double> & values, const 
             std::to_string(values.size()));
   }
   return std::array<double, 3>{values[0], values[1], values[2]};
+}
+
+/// Combine a measured variance with a fallback covariance, axis by axis.
+///
+/// A perfectly quiet axis - a stuck sensor, or one whose quantised output never moves while
+/// the robot is still - measures exactly zero variance. Publishing that would claim the
+/// reading is perfectly certain, so such an axis takes the fallback instead. The choice is
+/// per axis on purpose: one silent axis must not discard a good measurement on the other two.
+conversions::Covariance blended_covariance(
+  const std::optional<std::array<double, 3>> & measured,
+  const conversions::Covariance & fallback)
+{
+  if (!measured.has_value()) {
+    return fallback;
+  }
+
+  // A fallback of -1 in slot 0 is the "no estimate available" sentinel, which has no per-axis
+  // variances to borrow from.
+  const bool fallback_is_sentinel = fallback[0] < 0.0;
+  std::array<double, 3> variance{fallback[0], fallback[4], fallback[8]};
+
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const double value = (*measured)[axis];
+    if (value > 0.0) {
+      variance[axis] = value;
+    } else if (fallback_is_sentinel) {
+      return fallback;
+    }
+  }
+  return conversions::covariance_from_variance(variance);
 }
 
 /// Parse a 3-element stddev parameter into \p target.
@@ -150,9 +181,23 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
       describe("Per-axis magnetic field stddev (tesla), scaled by mag calibration")),
     "magnetic_field_stddev");
 
+  noise_window_ = this->declare_parameter<int>(
+    "noise_window", 100,
+    describe("Samples of live signal used to measure covariance; <2 disables measurement"));
+  noise_estimate_when_still_ = this->declare_parameter<bool>(
+    "noise_estimate_when_still", true,
+    describe("Only measure noise while the robot looks stationary"));
+  stationary_gyro_threshold_ = this->declare_parameter<double>(
+    "stationary_gyro_threshold", 0.02,
+    describe("Angular velocity magnitude (rad/s) below which the robot counts as still"));
+  stationary_accel_threshold_ = this->declare_parameter<double>(
+    "stationary_accel_threshold", 0.2,
+    describe("Acceleration deviation (m/s^2) from the window mean allowed while still"));
+
   if (control_freq_ <= 0.0) {
     throw std::invalid_argument("control_freq must be > 0");
   }
+  reset_noise_estimators_locked();
 
   param_callback_handle_ = this->add_on_set_parameters_callback(
     [this](const std::vector<rclcpp::Parameter> & parameters) {
@@ -240,7 +285,73 @@ ImuNode::PublishParams ImuNode::publish_params_locked() const
   params.angular_velocity_stddev = angular_velocity_stddev_;
   params.linear_acceleration_stddev = linear_acceleration_stddev_;
   params.magnetic_field_stddev = magnetic_field_stddev_;
+  params.measured_angular_velocity = angular_velocity_noise_.variance();
+  params.measured_linear_acceleration = linear_acceleration_noise_.variance();
+  params.measured_magnetic_field = magnetic_field_noise_.variance();
+  params.measured_orientation = orientation_noise_.variance();
   return params;
+}
+
+void ImuNode::reset_noise_estimators_locked()
+{
+  const size_t window = noise_window_ > 1 ? static_cast<size_t>(noise_window_) : 2;
+  angular_velocity_noise_ = RollingVariance(window, AngleWrap::None);
+  linear_acceleration_noise_ = RollingVariance(window, AngleWrap::None);
+  magnetic_field_noise_ = RollingVariance(window, AngleWrap::None);
+  // Euler angles wrap: a yaw sitting near +/- pi would otherwise show enormous fake variance.
+  orientation_noise_ = RollingVariance(window, AngleWrap::Radians);
+}
+
+bool ImuNode::is_stationary_locked(const ImuSample & sample) const
+{
+  if (sample.angular_velocity.has_value()) {
+    const auto & w = *sample.angular_velocity;
+    const double rate = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+    if (rate > stationary_gyro_threshold_) {
+      return false;
+    }
+  }
+
+  // Rotation alone misses straight-line acceleration, so also require the acceleration to sit
+  // close to what the window has been seeing. Only meaningful once the window has filled.
+  if (sample.linear_acceleration.has_value() && linear_acceleration_noise_.ready()) {
+    const auto & a = *sample.linear_acceleration;
+    const auto centre = linear_acceleration_noise_.mean();
+    double squared = 0.0;
+    for (size_t axis = 0; axis < 3; ++axis) {
+      const double d = a[axis] - centre[axis];
+      squared += d * d;
+    }
+    if (std::sqrt(squared) > stationary_accel_threshold_) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void ImuNode::update_noise_estimators_locked(const ImuSample & sample)
+{
+  if (noise_window_ < 2) {
+    return;
+  }
+  if (noise_estimate_when_still_ && !is_stationary_locked(sample)) {
+    // Hold the last good estimate rather than poisoning it with motion.
+    return;
+  }
+
+  if (sample.angular_velocity.has_value()) {
+    angular_velocity_noise_.push(*sample.angular_velocity);
+  }
+  if (sample.linear_acceleration.has_value()) {
+    linear_acceleration_noise_.push(*sample.linear_acceleration);
+  }
+  if (sample.magnetic_field.has_value()) {
+    magnetic_field_noise_.push(*sample.magnetic_field);
+  }
+  if (sample.euler.has_value()) {
+    orientation_noise_.push(*sample.euler);
+  }
 }
 
 DriverConfig ImuNode::driver_config() const
@@ -350,6 +461,16 @@ rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
       if (!assign_stddev(parameter, magnetic_field_stddev_, result)) {
         return result;
       }
+    } else if (name == "noise_window") {
+      noise_window_ = static_cast<int>(parameter.as_int());
+      // Resizing invalidates the accumulated samples, so start the estimate over.
+      reset_noise_estimators_locked();
+    } else if (name == "noise_estimate_when_still") {
+      noise_estimate_when_still_ = parameter.as_bool();
+    } else if (name == "stationary_gyro_threshold") {
+      stationary_gyro_threshold_ = parameter.as_double();
+    } else if (name == "stationary_accel_threshold") {
+      stationary_accel_threshold_ = parameter.as_double();
     }
   }
 
@@ -391,6 +512,7 @@ void ImuNode::on_sample(const ImuSample & sample)
     if (sample.calibration.has_value()) {
       last_calibration_ = sample.calibration;
     }
+    update_noise_estimators_locked(sample);
     params = publish_params_locked();
   }
 
@@ -439,26 +561,39 @@ void ImuNode::publish_imu(
     msg.orientation.z = (*sample.orientation)[2];
     msg.orientation.w = (*sample.orientation)[3];
   }
-  msg.orientation_covariance = conversions::orientation_covariance(
+  // Prefer variance measured from the live signal; fall back to the configured stddev scaled
+  // by calibration when no window has filled yet. Fusion off still wins over both.
+  const auto orientation_fallback = conversions::orientation_covariance(
     fusion_mode, sample.calibration, params.orientation_stddev);
+  if (fusion_mode == 0) {
+    // No orientation estimate exists at all; a measured variance cannot rescue that.
+    msg.orientation_covariance = orientation_fallback;
+  } else {
+    msg.orientation_covariance =
+      blended_covariance(params.measured_orientation, orientation_fallback);
+  }
 
   if (sample.angular_velocity.has_value()) {
     msg.angular_velocity.x = (*sample.angular_velocity)[0];
     msg.angular_velocity.y = (*sample.angular_velocity)[1];
     msg.angular_velocity.z = (*sample.angular_velocity)[2];
   }
-  msg.angular_velocity_covariance = conversions::scaled_covariance(
-    params.angular_velocity_stddev, sample.calibration,
-    conversions::CalibrationAxis::Gyroscope);
+  msg.angular_velocity_covariance = blended_covariance(
+    params.measured_angular_velocity,
+    conversions::scaled_covariance(
+      params.angular_velocity_stddev, sample.calibration,
+      conversions::CalibrationAxis::Gyroscope));
 
   if (sample.linear_acceleration.has_value()) {
     msg.linear_acceleration.x = (*sample.linear_acceleration)[0];
     msg.linear_acceleration.y = (*sample.linear_acceleration)[1];
     msg.linear_acceleration.z = (*sample.linear_acceleration)[2];
   }
-  msg.linear_acceleration_covariance = conversions::scaled_covariance(
-    params.linear_acceleration_stddev, sample.calibration,
-    conversions::CalibrationAxis::Accelerometer);
+  msg.linear_acceleration_covariance = blended_covariance(
+    params.measured_linear_acceleration,
+    conversions::scaled_covariance(
+      params.linear_acceleration_stddev, sample.calibration,
+      conversions::CalibrationAxis::Accelerometer));
 
   imu_pub_->publish(msg);
 }
@@ -487,8 +622,10 @@ void ImuNode::publish_magnetic_field(
   msg.magnetic_field.x = magnetic_field[0];
   msg.magnetic_field.y = magnetic_field[1];
   msg.magnetic_field.z = magnetic_field[2];
-  msg.magnetic_field_covariance = conversions::scaled_covariance(
-    params.magnetic_field_stddev, calibration, conversions::CalibrationAxis::Magnetometer);
+  msg.magnetic_field_covariance = blended_covariance(
+    params.measured_magnetic_field,
+    conversions::scaled_covariance(
+      params.magnetic_field_stddev, calibration, conversions::CalibrationAxis::Magnetometer));
   mag_pub_->publish(msg);
 }
 
