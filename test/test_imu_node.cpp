@@ -248,8 +248,8 @@ TEST_F(ImuNodeTest, CovarianceTracksCalibrationRatherThanBeingFixed)
         if (all.empty()) {
           return false;
         }
-        return all.back().angular_velocity_covariance[0] <
-        cold.angular_velocity_covariance[0];
+        const double warm_variance = all.back().angular_velocity_covariance[0];
+        return warm_variance < cold.angular_velocity_covariance[0];
       },
       kMessageDeadline)) << "covariance did not change with calibration - is it hardcoded?";
 

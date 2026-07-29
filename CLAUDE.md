@@ -41,7 +41,6 @@ include/idmind_imu/
   drivers/registry.hpp   # name -> factory
   drivers/brick_v2.hpp   # TinkerForge IMU Brick 2.0
 src/                     # matching .cpp files, plus main.cpp
-vendor/tinkerforge/      # vendored CC0 C bindings - see below
 test/                    # gtest suites + fake_brickd.{hpp,cpp}
 ```
 
@@ -57,18 +56,28 @@ Unlike the Python original, `apply_config` takes the **whole** `DriverConfig`, n
 patch: the node always knows every field, and the driver decides what actually changed. The
 node still only calls it when a hardware-relevant parameter changed.
 
-## Vendored TinkerForge bindings
+## TinkerForge bindings (fetched, not vendored)
 
-`vendor/tinkerforge/` holds `ip_connection.[ch]` and `brick_imu_v2.[ch]` from the official
-C/C++ bindings zip, which is **CC0 1.0** licensed. They are vendored because TinkerForge ships
-no apt package and therefore no rosdep rule — this is what keeps `rosdep install` working.
+`CMakeLists.txt` pulls the official C bindings zip at configure time via `FetchContent`,
+pinned to `TINKERFORGE_C_BINDINGS_VERSION` + `TINKERFORGE_C_BINDINGS_SHA256`, and compiles
+`ip_connection.c` and `brick_imu_v2.c` into a static `tinkerforge_bindings` target.
 
-- Keep them **byte-identical to upstream**. They are compiled with `-w` and excluded from
-  every linter via `AMENT_LINT_AUTO_FILE_EXCLUDE` in `CMakeLists.txt`. Do not reformat them to
-  satisfy uncrustify; that would destroy the ability to diff against a fresh download.
-- The include directory is `vendor/`, not `vendor/tinkerforge/`, so includes read
-  `"tinkerforge/ip_connection.h"` — cpplint requires the directory prefix.
-- To upgrade: re-download `tinkerforge_c_bindings_latest.zip` and copy those four files over.
+There is deliberately nothing to `find_package()`: TinkerForge ships **no precompiled library
+and no distro package** ("we do not offer a precompiled library"), and their documented
+install method is to compile their source into your project. Verified: `apt-cache search
+tinkerforge` and the rosdep database are both empty.
+
+- **Never use their `_latest` URL.** It would change the driver under us between builds.
+  Upgrading means bumping the version *and* the SHA256 together.
+- A clean build **needs network access**. `-DTINKERFORGE_C_BINDINGS_DIR=/path/to/source`
+  points at a pre-downloaded `source/` directory for offline builds; the build hard-fails with
+  a clear message if any of the four expected files is missing.
+- The headers are staged into `${CMAKE_CURRENT_BINARY_DIR}/tinkerforge_include/tinkerforge/`
+  so includes read `"tinkerforge/ip_connection.h"` (cpplint requires the directory prefix);
+  upstream has them flat in `source/`. They are installed too, because the public
+  `brick_v2.hpp` includes them.
+- The sources live in the build tree, so no linter sees them and no exclusion list is needed.
+  They are compiled with `-w`.
 
 ## Threading — read before touching `src/drivers/brick_v2.cpp`
 
@@ -115,7 +124,7 @@ thread; shared state is under `mutex_`, and publishing happens outside it. `log(
 - **LEDs are two independent booleans** (`are_leds_on`, `is_status_led_enabled`), read and
   compared separately. The old code OR-ed them, which could never converge upward.
 - **Do not add a `tinkerforge` dependency to `package.xml`.** There is no rosdep rule for it;
-  the bindings are vendored precisely so no such dependency is needed.
+  the bindings are fetched by CMake precisely so no such dependency is needed.
 
 ## Units (IMU Brick 2.0 — v2, not v1)
 
@@ -147,7 +156,7 @@ version of this bug.
 **Under ThreadSanitizer** the suite is not silent, and the noise has two known, benign
 sources. Classify a report by the `#0` frame of each stack — deeper frames are only callers.
 
-1. *Vendored bindings.* Most reports have `#0` inside `vendor/tinkerforge/ip_connection.c`
+1. *The TinkerForge bindings.* Most reports have `#0` inside the fetched `ip_connection.c`
    (`ipcon_handle_response` vs `ipcon_send_request`, `ipcon_disconnect_unlocked` vs
    `ipcon_receive_loop`). Upstream, in code we keep byte-identical. Not ours to fix, but note
    it does ship compiled into our library.
@@ -184,7 +193,7 @@ rate measurement.
 - `control_freq` changes **recreate** the watchdog timer (`restart_watchdog_timer`); rclcpp
   has no period setter.
 - Lint: `ament_lint_auto` with the common set (cpplint, uncrustify, lint_cmake, xmllint), max
-  line length **100**. `ament_cmake_cppcheck` is excluded — it chokes on the vendored C.
+  line length **100**. `ament_cmake_cppcheck` is excluded — it chokes on the fetched third-party C.
   Uncrustify is picky about ternaries (operator at end of line), brace-init spacing
   (`struct pollfd pfd {…}`), and continuation indentation; run it before assuming a failure is
   real.

@@ -25,11 +25,25 @@ For the `brick_v2` driver:
 Install [BrickDaemon](https://www.tinkerforge.com/en/doc/Software/Brickd.html#brickd) — it
 proxies between USB and the TCP port the driver connects to.
 
-That is the only runtime prerequisite. The TinkerForge **C bindings are vendored** in
-`vendor/tinkerforge/` (CC0 1.0 licensed) and compiled into the package, so there is nothing
-else to install and `rosdep install` works unmodified. To refresh them, re-download
-`tinkerforge_c_bindings_latest.zip` and copy `ip_connection.[ch]` and `brick_imu_v2.[ch]`
-over the existing files; they are kept byte-identical to upstream so the diff stays readable.
+That is the only runtime prerequisite.
+
+The TinkerForge **C bindings are fetched at configure time** from the official release
+(pinned to a version and SHA256 in `CMakeLists.txt`) and compiled into the package. This is
+the upstream-recommended way to use them: TinkerForge ships
+[no precompiled library](https://www.tinkerforge.com/en/doc/Software/API_Bindings_C.html)
+and no distro package, so there is nothing to `apt install` or link against. Nothing extra to
+install, and `rosdep install` works unmodified.
+
+> **A clean build needs network access.** To build offline, download
+> `tinkerforge_c_bindings_<version>.zip` yourself and point the build at its `source/`
+> directory:
+> ```bash
+> colcon build --packages-select idmind_imu \
+>   --cmake-args -DTINKERFORGE_C_BINDINGS_DIR=/path/to/source
+> ```
+>
+> To upgrade the bindings, bump `TINKERFORGE_C_BINDINGS_VERSION` and
+> `TINKERFORGE_C_BINDINGS_SHA256` together.
 
 The device UID is discovered automatically by enumeration; you do not need to configure it.
 
