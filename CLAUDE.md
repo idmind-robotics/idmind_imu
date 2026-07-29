@@ -1,18 +1,10 @@
-# ros2_ws
+# idmind_imu
 
-IDMind robotics ROS 2 workspace. **ROS 2 Humble on Ubuntu 22.04.**
+ROS 2 wrappers for IMUs on IDMind robots. **ROS 2 Humble / Ubuntu 22.04**, `ament_python`.
 
-The workspace root is *not* a git repository — each package under `src/` is its own repo and
-is consumed elsewhere as a git submodule. Never `git init` at the root, and keep changes
-scoped to a single package per commit.
-
-## Packages
-
-| Package | Build type | State |
-|---|---|---|
-| `idmind_imu` | `ament_python` | Working driver for the TinkerForge IMU Brick 2.0 |
-| `idmind_docking` | `ament_python` | Skeleton — `dock_detection_node` is a stub `print()` |
-| `idmind_gazebo` | `ament_cmake` | Simulation assets: worlds, meshes, models, xacros |
+This repo is its own git repository, consumed elsewhere as a **git submodule**. It normally
+sits at `~/ros2_ws/src/idmind_imu`; the workspace root is not a git repo. Keep commits scoped
+to this package. Do **not** run `graphify` here.
 
 ## Commands
 
@@ -20,89 +12,112 @@ scoped to a single package per commit.
 cd ~/ros2_ws
 colcon build --symlink-install --packages-select idmind_imu
 source install/setup.bash
-
 ros2 launch idmind_imu idmind_imu_brick.launch.py
 
-# Lint (ament defaults: flake8 max-line-length 99)
 colcon test --packages-select idmind_imu && colcon test-result --verbose
 ```
 
-`--symlink-install` matters here: without it, edits to Python nodes require a rebuild.
+`--symlink-install` matters: without it, edits to Python files require a rebuild.
 
-## idmind_imu
+To run pytest directly you must **append** to `PYTHONPATH`, not replace it — `PYTHONPATH=.`
+clobbers the ROS paths and every `rclpy` import fails:
 
-Driver for the TinkerForge IMU Brick 2.0 (BNO-055), reached over BrickDaemon TCP at
-`localhost:4223`. Requires `brickd` running plus the `tinkerforge` Python bindings; neither is
-declared in `package.xml`, so `rosdep` will not install them.
+```bash
+source /opt/ros/humble/setup.bash
+cd src/idmind_imu && PYTHONPATH=".:$PYTHONPATH" python3 -m pytest test/ -q
+```
 
-Two nodes ship as console scripts. **`imu_brick_node_v2` is the live one** — it is what the
-launch file starts. `imu_brick_node` is the legacy version, unused by any launch file, kept
-deliberately for now; do not "helpfully" delete it or sync it with v2.
+## Architecture
 
-### Runtime interface
+Hardware-agnostic node + pluggable driver layer. Adding an IMU model means adding one driver
+file, never another node.
 
-The launch file names the node `idmind_imu`, and topic names are built from
-`self.get_name() + "/"`, so the real topics are `/idmind_imu/*`.
+```
+idmind_imu/
+  imu_node.py       # ROS node: params, publishers, diagnostics, watchdog. No hardware code.
+  conversions.py    # pure unit + covariance maths. No ROS, no tinkerforge. Unit tested.
+  drivers/
+    base.py         # ImuDriver ABC, ImuSample, DriverState
+    registry.py     # name -> class; drivers imported lazily
+    brick_v2.py     # TinkerForge IMU Brick 2.0
+```
 
-**The README documents them as `imu_brick_node/*` and is wrong** — along with describing
-`euler` as degrees when it publishes radians, and omitting the `gravity` and `calibration`
-publishers and the `auto_reconnect` parameter. Trust the source, not `README.MD`.
+The node picks a driver via the `driver` parameter, hands it a config dict and an `on_sample`
+callback, and converts the resulting `ImuSample` into messages. Drivers emit **SI units
+only** — raw counts never reach the node.
 
-- Publishers: `imu` (`sensor_msgs/Imu`), `temperature`, `magnetic_field`, `euler`
-  (`std_msgs/Float32`, yaw in **radians**), `gravity` (`geometry_msgs/Vector3Stamped`),
-  `calibration` (`std_msgs/UInt8MultiArray`, `[sys, gyro, acc, mag]` each 0–3), `timer`,
-  and `/diagnostics`.
-- Service: `ready` (`std_srvs/Trigger`).
-- Parameters: `control_freq`, `imu_freq`, `imu_frame`, `imu_leds`, `imu_fusion_mode`,
-  `timeout`, `auto_reconnect` — all dynamically reconfigurable via `update_parameters`.
-  `config/idmind_imu.yaml` overrides `imu_frame` to `"imu2"` (code default is `"imu"`).
+Node name is `idmind_imu`; topics derive from the node name, so they are `/idmind_imu/*`.
+Three console scripts (`imu_node`, `imu_brick_node_v2`, `imu_brick_node`) all run this same
+node — the legacy names are kept so deployed launch files keep working.
 
-The package installs meshes and xacros under `models/`, but nothing in the package loads them
-and no TF is broadcast for `imu_frame` — the transform must come from an external robot
-description.
+## Threading — read before touching `drivers/brick_v2.py`
 
-### Threading model — read before touching `imu_brick_node_v2.py`
+The `tinkerforge` bindings dispatch **every** callback serially on one internal
+`Callback-Processor` thread. Blocking in a callback stalls the entire sensor stream. So:
 
-`MultiThreadedExecutor(num_threads=6)` with three `ReentrantCallbackGroup`s. Three kinds of
-thread touch node state:
+- `_enumerate_callback` does only cheap work and **enqueues** config to a worker thread.
+- All hardware getters/setters run on that dedicated worker thread, never in a callback.
+- The initial `ipcon.connect()` blocks, so it runs on its own retry thread; the library's
+  auto-reconnect only covers reconnection *after* a first successful connect.
+- `_all_data_callback` converts and calls `on_sample`, swallowing exceptions so a bad
+  consumer cannot kill the callback thread.
 
-1. **`main_loop`** — a 20 Hz ROS timer supervising the link: connect, enumerate, watchdog the
-   data timeout, poll config.
-2. **A daemon thread** for the initial `ipcon.connect()`, which blocks.
-3. **TinkerForge-owned threads** delivering `CALLBACK_CONNECTED` / `CALLBACK_DISCONNECTED` /
-   `CALLBACK_ENUMERATE` and, crucially, `BrickIMUV2.CALLBACK_ALL_DATA` — `publish_imu` runs
-   here and publishes directly from a non-ROS thread.
+Guard `self._imu` / `self._state` with `self._lock`, and never hold the lock across a
+blocking hardware call — copy the reference out, then do I/O.
 
-`self.imu` and `self.imu_uid` must only be read or written under `self._imu_lock`. The
-established pattern is to copy the reference out under the lock and do hardware I/O outside
-it (see `update_config`). Device discovery matches `device_identifier == 18`.
+In the node, `on_sample` runs on a driver thread while the watchdog runs on an executor
+thread; shared state is under `self._lock`, and publishing happens outside it.
 
-### Known defects (recorded, not yet fixed)
+## Invariants that exist for a reason — do not "simplify" these
 
-The user is aware of these and will schedule the work — don't fix them opportunistically.
-Full write-up with line references: `~/.claude/plans/quiet-launching-nygaard.md`.
+- **The watchdog must never shut down.** Its exception handler logs and continues. The
+  pre-refactor node called `shutdown()` there, which cancelled its own timer and set a
+  latching flag, leaving the process alive but permanently inert after one transient error.
+- **Config is applied on change only**, from `apply_config()` or once after enumeration. The
+  old node polled four blocking USB getters every second forever. Do not reintroduce a poll.
+- **Covariances come from `conversions.diagonal_covariance`** so off-diagonals are exactly
+  zero. The old code used `[x] * 9`, which left garbage cross-terms for `robot_localization`.
+- **`orientation_covariance[0] = -1`** when fusion mode is 0 — the `sensor_msgs/Imu` "no
+  orientation" signal. Otherwise variance scales with system calibration, and fusion mode 2
+  inflates yaw (relative heading, drifts without the magnetometer).
+- **LEDs are two independent booleans** (`are_leds_on`, `is_status_led_enabled`), read and
+  compared separately. The old code OR-ed them, which could never converge upward.
+- **Do not add `tinkerforge` to `package.xml`.** `python3-tinkerforge` has no rosdep rule, so
+  declaring it breaks `rosdep install`. It is a documented manual prerequisite.
 
-- `main_loop`'s exception handler calls `self.shutdown()`, which cancels the main timer and
-  sets `_shutdown_in_progress` with no path back. A single transient exception leaves the
-  process alive but permanently inert. **This is the one that bites in the field.**
-- `angular_velocity_covariance` and `magnetic_field_covariance` are built with `[x] * 9`, so
-  the off-diagonal terms carry nonzero garbage that downstream filters will consume.
-- `orientation_covariance` is a fixed `1e-4` diagonal regardless of fusion mode or reported
-  calibration; `orientation_covariance[0] = -1` is never used to signal an invalid quaternion.
-- `enumerate_callback` builds a new `BrickIMUV2` and a new timer on every enumeration and only
-  `cancel()`s the old timer rather than `destroy_timer()`ing it.
-- `update_config` does four blocking USB round-trips every second regardless of whether
-  anything changed, and its LED read-back ORs two independent LEDs so it cannot converge.
+## Units (IMU Brick 2.0 — v2, not v1)
+
+The v1 device has **different** units; ignore the v1 docs. Verified v2 raw units:
+acceleration / linear_acceleration / gravity_vector `1 cm/s²` (÷100); magnetic_field
+`1/16 µT` (÷16e6 → T); angular_velocity `1/16 °/s`; euler_angle `1/16 °`, ordered
+**(heading, roll, pitch)**; quaternion ÷16383, ordered **(w, x, y, z)** — ROS wants
+(x, y, z, w); temperature already °C. Calibration byte: bits 0-1 mag, 2-3 acc, 4-5 gyro,
+6-7 sys, each 0–3.
+
+## Testing
+
+`test/fake_brickd.py` is a fake BrickDaemon speaking the real TinkerForge wire protocol on an
+ephemeral port, so the whole suite runs with **no hardware and no brickd**. Key traps it
+handles: `GET_IDENTITY` (255) must be answered or `check_validity()` poisons every later
+getter with `WRONG_DEVICE_TYPE`; unsolicited packets need sequence number 0; the enumerate
+reply must be exactly 34 bytes and `CALLBACK_ALL_DATA` exactly 54; and the idle socket must
+never be closed (the disconnect probe needs no reply).
+
+Tests must poll with a deadline, never a bare sleep. If you start a node with
+`subprocess.Popen(["ros2", "run", ...])`, use `start_new_session=True` and kill the process
+**group** — `terminate()` kills only the `ros2` wrapper and leaves an orphan node publishing
+to `/diagnostics`, which silently corrupts any rate measurement.
 
 ## Conventions
 
-- Node classes follow the IDMind pattern: a `ready` `Trigger` service, an
-  `add_on_set_parameters_callback` handler, a `/diagnostics` publisher, a `timer` heartbeat
-  topic, and a `self.log(msg, level, alert=...)` wrapper with duplicate suppression rather
-  than direct `get_logger()` calls. Match this in new nodes.
-- Parameters are declared with `ParameterDescriptor(description=...)` and read immediately via
+- Parameters declared with `ParameterDescriptor(description=...)`, read immediately via
   `.get_parameter_value().<type>_value`.
-- Tests are ament lint boilerplate only (`test_flake8`, `test_pep257`, `test_copyright`) —
-  there is no functional test suite to lean on. Verify changes against real hardware or by
-  running the node and inspecting topics.
-- Do **not** run `graphify` on this workspace.
+- Node exposes a `ready` `Trigger` service, an `add_on_set_parameters_callback` handler, and
+  a `timer` heartbeat topic. Use `self.log(msg, alert=...)` (duplicate-suppressing) rather
+  than `get_logger()` directly.
+- Diagnostics go through `diagnostic_updater.Updater`, which publishes `/diagnostics` on its
+  own 1 Hz timer. Do **not** call `force_update()` from the watchdog — that would republish
+  at `control_freq`.
+- Lint: `ament_flake8` + `ament_pep257`, max line length **99**, both run by `colcon test`.
+  Note ament ignores `D212` but **enforces `D213`**: a multi-line docstring puts its summary
+  on the *second* line.

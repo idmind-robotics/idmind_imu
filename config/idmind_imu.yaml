@@ -1,9 +1,15 @@
 /**:
   ros__parameters:
     use_sim_time: false
+    driver: "brick_v2"
+    host: "localhost"
+    port: 4223
     control_freq: 20.0
     imu_freq: 20.0
-    imu_frame: "imu2"
+    imu_frame: "imu"
     imu_leds: false
     imu_fusion_mode: 2
     timeout: 1.0
+    auto_reconnect: true
+    acceleration_source: "linear"
+    orientation_stddev: 0.01

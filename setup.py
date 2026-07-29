@@ -15,9 +15,12 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*launch.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'models', 'imu_razor'), glob('models/imu_razor/*.*')),
-        (os.path.join('share', package_name, 'models', 'imu_brick_v2'), glob('models/imu_brick_v2/*.*')),
+        (os.path.join('share', package_name, 'models', 'imu_brick_v2'),
+            glob('models/imu_brick_v2/*.*')),
     ],
-    install_requires=['setuptools', 'tinkerforge'],
+    # tinkerforge is only needed by the brick_v2 driver and has no rosdep rule; it is
+    # installed manually (see README.MD). Keep it out of package.xml so rosdep still works.
+    install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Carlos Neves',
     maintainer_email='cneves@idmind.pt',
@@ -26,8 +29,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'imu_brick_node = idmind_imu.imu_brick_node:main',
-            'imu_brick_node_v2 = idmind_imu.imu_brick_node_v2:main',
+            'imu_node = idmind_imu.imu_node:main',
+            'imu_brick_node_v2 = idmind_imu.imu_node:main',
+            'imu_brick_node = idmind_imu.imu_node:main',
         ],
     },
 )
