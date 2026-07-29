@@ -78,6 +78,7 @@ to the driver immediately rather than polled.
 | `auto_reconnect` | bool | `true` | Let the driver reconnect automatically |
 | `acceleration_source` | string | `linear` | `linear` (gravity removed) or `raw` (gravity included) |
 | `orientation_stddev` | double | `0.01` | Base orientation stddev at full calibration |
+| `temperature_stddev` | double | `0.0` | Temperature stddev (°C); `0` (the default) publishes variance `0` = unknown |
 
 **Fusion modes:** `0` off (raw data — orientation is meaningless), `1` on with magnetometer
 (absolute heading), `2` on without magnetometer (**relative yaw that drifts** — the default),
@@ -92,7 +93,7 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 | Topic | Type | Notes |
 |---|---|---|
 | `~/imu` | `sensor_msgs/Imu` | Orientation, angular velocity (rad/s), linear acceleration (m/s²) |
-| `~/temperature` | `sensor_msgs/Temperature` | Sensor temperature (°C) |
+| `~/temperature` | `sensor_msgs/Temperature` | Sensor temperature (°C); `variance` from `temperature_stddev` |
 | `~/magnetic_field` | `sensor_msgs/MagneticField` | Tesla |
 | `~/euler` | `std_msgs/Float32` | **Yaw only, in radians** |
 | `~/gravity` | `geometry_msgs/Vector3Stamped` | Gravity vector (m/s²) |

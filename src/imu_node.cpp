@@ -93,6 +93,11 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
     describe("Which device field to report as linear_acceleration"));
   orientation_stddev_ = this->declare_parameter<double>(
     "orientation_stddev", 0.01, describe("Base orientation stddev at full calibration"));
+  // Defaults to 0, which sensor_msgs/Temperature reads as "variance unknown" - the same thing
+  // this node published before the parameter existed. Set it to opt into a real variance.
+  temperature_stddev_ = this->declare_parameter<double>(
+    "temperature_stddev", 0.0,
+    describe("Temperature stddev in degrees Celsius; 0 publishes variance 0 (unknown)"));
 
   if (control_freq_ <= 0.0) {
     throw std::invalid_argument("control_freq must be > 0");
@@ -152,7 +157,7 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
   updater_->add("Calibration", this, &ImuNode::diagnose_calibration);
 
   // -- Watchdog ----------------------------------------------------------------------------------
-  restart_watchdog_timer();
+  restart_watchdog_timer(control_freq_);
 
   ready_ = true;
   log("Node is initialized.");
@@ -173,6 +178,15 @@ void ImuNode::stop_driver()
 DriverState ImuNode::driver_state() const
 {
   return driver_->state();
+}
+
+ImuNode::PublishParams ImuNode::publish_params_locked() const
+{
+  PublishParams params;
+  params.imu_frame = imu_frame_;
+  params.orientation_stddev = orientation_stddev_;
+  params.temperature_stddev = temperature_stddev_;
+  return params;
 }
 
 DriverConfig ImuNode::driver_config() const
@@ -209,6 +223,11 @@ rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
 
   bool driver_config_changed = false;
   bool control_freq_changed = false;
+
+  // Held across the whole scan: the publish parameters below are read by on_sample on a
+  // driver thread. The lock is released before apply_config so the node lock is never held
+  // while acquiring the driver's, which would invert the driver callback's lock order.
+  std::unique_lock<std::mutex> lock(mutex_);
 
   for (const auto & parameter : parameters) {
     const std::string & name = parameter.get_name();
@@ -249,18 +268,36 @@ rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
       acceleration_source_ = parameter.as_string();
       driver_config_changed = true;
     } else if (name == "orientation_stddev") {
+      // 0 is allowed and means "unknown": orientation_covariance then reports the -1
+      // sentinel rather than an all-zero matrix. Negative is simply nonsense.
+      if (parameter.as_double() < 0.0) {
+        result.successful = false;
+        result.reason = "orientation_stddev must be >= 0";
+        return result;
+      }
       orientation_stddev_ = parameter.as_double();
       driver_config_changed = true;
+    } else if (name == "temperature_stddev") {
+      if (parameter.as_double() < 0.0) {
+        result.successful = false;
+        result.reason = "temperature_stddev must be >= 0";
+        return result;
+      }
+      temperature_stddev_ = parameter.as_double();
     }
   }
 
+  const DriverConfig config = driver_config();
+  const double control_freq = control_freq_;
+  lock.unlock();
+
   if (control_freq_changed) {
-    restart_watchdog_timer();
+    restart_watchdog_timer(control_freq);
   }
 
   // Config is forwarded on change only; the driver must never be polled on a schedule.
   if (driver_config_changed && driver_) {
-    driver_->apply_config(driver_config());
+    driver_->apply_config(config);
   }
 
   return result;
@@ -273,6 +310,10 @@ void ImuNode::on_sample(const ImuSample & sample)
   const rclcpp::Time stamp = this->get_clock()->now();
   const int fusion_mode = sample.fusion_mode.value_or(0);
 
+  // Snapshot the parameters this publish pass needs while holding the lock. They are written
+  // by update_parameters on an executor thread, so reading them straight off the members from
+  // this driver thread would be a data race - and a torn std::string read is not theoretical.
+  PublishParams params;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -284,20 +325,21 @@ void ImuNode::on_sample(const ImuSample & sample)
     if (sample.calibration.has_value()) {
       last_calibration_ = sample.calibration;
     }
+    params = publish_params_locked();
   }
 
   if (sample.orientation.has_value() || sample.angular_velocity.has_value() ||
     sample.linear_acceleration.has_value())
   {
-    publish_imu(stamp, sample, fusion_mode);
+    publish_imu(stamp, sample, fusion_mode, params);
   }
 
   if (sample.temperature.has_value()) {
-    publish_temperature(stamp, *sample.temperature);
+    publish_temperature(stamp, *sample.temperature, params);
   }
 
   if (sample.magnetic_field.has_value()) {
-    publish_magnetic_field(stamp, *sample.magnetic_field);
+    publish_magnetic_field(stamp, *sample.magnetic_field, params);
   }
 
   if (sample.euler.has_value()) {
@@ -307,7 +349,7 @@ void ImuNode::on_sample(const ImuSample & sample)
   }
 
   if (sample.gravity.has_value()) {
-    publish_gravity(stamp, *sample.gravity);
+    publish_gravity(stamp, *sample.gravity, params);
   }
 
   if (sample.calibration.has_value()) {
@@ -318,11 +360,12 @@ void ImuNode::on_sample(const ImuSample & sample)
 }
 
 void ImuNode::publish_imu(
-  const rclcpp::Time & stamp, const ImuSample & sample, int fusion_mode)
+  const rclcpp::Time & stamp, const ImuSample & sample, int fusion_mode,
+  const PublishParams & params)
 {
   sensor_msgs::msg::Imu msg;
   msg.header.stamp = stamp;
-  msg.header.frame_id = imu_frame_;
+  msg.header.frame_id = params.imu_frame;
 
   if (sample.orientation.has_value()) {
     msg.orientation.x = (*sample.orientation)[0];
@@ -331,7 +374,7 @@ void ImuNode::publish_imu(
     msg.orientation.w = (*sample.orientation)[3];
   }
   msg.orientation_covariance = conversions::orientation_covariance(
-    fusion_mode, sample.calibration, orientation_stddev_);
+    fusion_mode, sample.calibration, params.orientation_stddev);
 
   if (sample.angular_velocity.has_value()) {
     msg.angular_velocity.x = (*sample.angular_velocity)[0];
@@ -352,21 +395,26 @@ void ImuNode::publish_imu(
   imu_pub_->publish(msg);
 }
 
-void ImuNode::publish_temperature(const rclcpp::Time & stamp, double temperature)
+void ImuNode::publish_temperature(
+  const rclcpp::Time & stamp, double temperature, const PublishParams & params)
 {
   sensor_msgs::msg::Temperature msg;
   msg.header.stamp = stamp;
-  msg.header.frame_id = imu_frame_;
+  msg.header.frame_id = params.imu_frame;
   msg.temperature = temperature;
+  // sensor_msgs/Temperature treats variance 0.0 as "unknown", which is what a
+  // temperature_stddev of 0 deliberately reproduces.
+  msg.variance = params.temperature_stddev * params.temperature_stddev;
   temp_pub_->publish(msg);
 }
 
 void ImuNode::publish_magnetic_field(
-  const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field)
+  const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field,
+  const PublishParams & params)
 {
   sensor_msgs::msg::MagneticField msg;
   msg.header.stamp = stamp;
-  msg.header.frame_id = imu_frame_;
+  msg.header.frame_id = params.imu_frame;
   msg.magnetic_field.x = magnetic_field[0];
   msg.magnetic_field.y = magnetic_field[1];
   msg.magnetic_field.z = magnetic_field[2];
@@ -376,11 +424,12 @@ void ImuNode::publish_magnetic_field(
 }
 
 void ImuNode::publish_gravity(
-  const rclcpp::Time & stamp, const std::array<double, 3> & gravity)
+  const rclcpp::Time & stamp, const std::array<double, 3> & gravity,
+  const PublishParams & params)
 {
   geometry_msgs::msg::Vector3Stamped msg;
   msg.header.stamp = stamp;
-  msg.header.frame_id = imu_frame_;
+  msg.header.frame_id = params.imu_frame;
   msg.vector.x = gravity[0];
   msg.vector.y = gravity[1];
   msg.vector.z = gravity[2];
@@ -389,9 +438,9 @@ void ImuNode::publish_gravity(
 
 // -- Watchdog (runs on an executor thread, no hardware I/O) -----------------------------------
 
-void ImuNode::restart_watchdog_timer()
+void ImuNode::restart_watchdog_timer(double control_freq)
 {
-  const auto period = std::chrono::duration<double>(1.0 / control_freq_);
+  const auto period = std::chrono::duration<double>(1.0 / control_freq);
   watchdog_timer_ = this->create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
     [this]() {this->watchdog();},
@@ -410,11 +459,13 @@ void ImuNode::watchdog()
     timer_pub_->publish(heartbeat);
 
     std::optional<std::chrono::steady_clock::time_point> last_sample;
+    double timeout = 0.0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       last_sample = last_sample_;
+      timeout = timeout_;
     }
-    if (!last_sample.has_value() || seconds_between(*last_sample, now) > timeout_) {
+    if (!last_sample.has_value() || seconds_between(*last_sample, now) > timeout) {
       log("No data from IMU driver", "warn");
     }
 
@@ -449,10 +500,12 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
 
   std::optional<std::chrono::steady_clock::time_point> last_sample;
   std::deque<std::chrono::steady_clock::time_point> sample_times;
+  double timeout = 0.0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_sample = last_sample_;
     sample_times = sample_times_;
+    timeout = timeout_;
   }
 
   const bool have_age = last_sample.has_value();
@@ -466,7 +519,7 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
     }
   }
 
-  if (!have_age || age > timeout_) {
+  if (!have_age || age > timeout) {
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No data within timeout");
   } else {
     stat.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Receiving data");

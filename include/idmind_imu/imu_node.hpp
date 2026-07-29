@@ -77,6 +77,21 @@ public:
   DriverState driver_state() const;
 
 private:
+  /// The node-side parameters one publish pass needs, snapshotted together under the lock.
+  ///
+  /// These are written by ``update_parameters`` on an executor thread and read by
+  /// ``on_sample`` on a driver thread, so they are copied out once per sample rather than
+  /// read off the members while publishing.
+  struct PublishParams
+  {
+    std::string imu_frame;
+    double orientation_stddev{0.01};
+    double temperature_stddev{0.0};
+  };
+
+  /// Copy the current publish parameters. Caller must hold ``mutex_``.
+  PublishParams publish_params_locked() const;
+
   /// Build the hardware-relevant config subset from the current parameter values.
   DriverConfig driver_config() const;
 
@@ -92,17 +107,23 @@ private:
   /// Convert one sample into ROS messages and publish. Runs on a driver thread.
   void on_sample(const ImuSample & sample);
 
-  void publish_imu(const rclcpp::Time & stamp, const ImuSample & sample, int fusion_mode);
-  void publish_temperature(const rclcpp::Time & stamp, double temperature);
+  void publish_imu(
+    const rclcpp::Time & stamp, const ImuSample & sample, int fusion_mode,
+    const PublishParams & params);
+  void publish_temperature(
+    const rclcpp::Time & stamp, double temperature, const PublishParams & params);
   void publish_magnetic_field(
-    const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field);
-  void publish_gravity(const rclcpp::Time & stamp, const std::array<double, 3> & gravity);
+    const rclcpp::Time & stamp, const std::array<double, 3> & magnetic_field,
+    const PublishParams & params);
+  void publish_gravity(
+    const rclcpp::Time & stamp, const std::array<double, 3> & gravity,
+    const PublishParams & params);
 
   /// Publish the heartbeat and check data staleness. Never performs hardware I/O.
   void watchdog();
 
-  /// Recreate the watchdog timer at the current ``control_freq``.
-  void restart_watchdog_timer();
+  /// Recreate the watchdog timer at \p control_freq (rclcpp has no timer period setter).
+  void restart_watchdog_timer(double control_freq);
 
   void diagnose_connection(diagnostic_updater::DiagnosticStatusWrapper & stat);
   void diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & stat);
@@ -125,6 +146,7 @@ private:
   bool auto_reconnect_{true};
   std::string acceleration_source_;
   double orientation_stddev_{0.01};
+  double temperature_stddev_{0.0};
 
   // -- Shared state, guarded by mutex_ (touched by a driver thread and an executor thread) --
 

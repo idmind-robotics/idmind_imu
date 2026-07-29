@@ -17,7 +17,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "idmind_imu/conversions.hpp"
 
@@ -160,6 +162,52 @@ TEST(Conversions, OrientationCovarianceFusionOffIsInvalidMarker)
   EXPECT_DOUBLE_EQ(cov[0], -1.0);
   for (size_t i = 1; i < cov.size(); ++i) {
     EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceZeroStddevIsUnknownNotCertain)
+{
+  // An all-zero covariance means "perfectly certain" to a consumer, not "unknown". A stddev
+  // of 0 must therefore produce the -1 sentinel rather than falling through to 0 * 0 * factor.
+  const auto cov = orientation_covariance(2, Calibration{3, 3, 3, 3}, 0.0);
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+  for (size_t i = 1; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceNegativeStddevIsUnknown)
+{
+  const auto cov = orientation_covariance(2, Calibration{3, 3, 3, 3}, -1.0);
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+}
+
+TEST(Conversions, OrientationCovarianceNanStddevIsUnknown)
+{
+  // NaN would otherwise propagate into every diagonal term and poison downstream filters.
+  const auto cov =
+    orientation_covariance(2, Calibration{3, 3, 3, 3}, std::numeric_limits<double>::quiet_NaN());
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+  for (size_t i = 1; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceIsNeverAllZero)
+{
+  // Sweep the whole input space the node can hand this function: no combination may yield a
+  // matrix that a consumer would read as "perfectly certain".
+  for (int fusion_mode : {0, 1, 2, 3}) {
+    for (uint8_t sys = 0; sys <= 3; ++sys) {
+      for (double stddev : {0.0, -1.0, 1e-9, 0.01, 1.0, 1e6}) {
+        const auto cov = orientation_covariance(fusion_mode, Calibration{sys, 0, 0, 0}, stddev);
+        const bool all_zero = std::all_of(
+          cov.begin(), cov.end(), [](double v) {return v == 0.0;});
+        EXPECT_FALSE(all_zero)
+          << "all-zero covariance for fusion_mode=" << fusion_mode
+          << " sys=" << static_cast<int>(sys) << " stddev=" << stddev;
+      }
+    }
   }
 }
 

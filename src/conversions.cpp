@@ -111,7 +111,12 @@ Covariance orientation_covariance(
   const std::optional<Calibration> & calibration,
   double stddev)
 {
-  if (fusion_mode == 0) {
+  // Fusion off means there is no orientation estimate at all. A non-positive (or NaN) stddev
+  // cannot describe an uncertainty either, and must NOT fall through to the maths below: that
+  // would yield an all-zero matrix, which downstream filters read as "perfectly certain"
+  // rather than "unknown" - the most dangerous value this function could return. Both cases
+  // report the sensor_msgs/Imu "no estimate available" sentinel instead.
+  if (fusion_mode == 0 || !(stddev > 0.0)) {
     return Covariance{-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   }
 

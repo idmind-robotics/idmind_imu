@@ -76,8 +76,10 @@ Covariance diagonal_covariance(double var_x, double var_y, double var_z);
 
 /// Build the covariance for sensor_msgs/Imu.orientation_covariance.
 ///
-/// If \p fusion_mode is 0 (OFF) the orientation is meaningless and this returns the
-/// sensor_msgs/Imu "no estimate available" sentinel: element 0 is -1.0, the rest 0.0.
+/// Returns the sensor_msgs/Imu "no estimate available" sentinel (element 0 is -1.0, the rest
+/// 0.0) when \p fusion_mode is 0 (OFF), and also when \p stddev is not strictly positive.
+/// The latter matters: an all-zero covariance means "perfectly certain" to a consumer, not
+/// "unknown", so a zero or NaN stddev must never be allowed to produce one.
 ///
 /// Otherwise the base variance is ``stddev ** 2``, scaled up as system calibration
 /// (element 0 of \p calibration) worsens. When \p fusion_mode is 2

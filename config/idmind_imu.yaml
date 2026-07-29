@@ -13,3 +13,4 @@
     auto_reconnect: true
     acceleration_source: "linear"
     orientation_stddev: 0.01
+    temperature_stddev: 0.0

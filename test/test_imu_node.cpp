@@ -276,6 +276,59 @@ TEST_F(ImuNodeTest, PublishesTemperatureMagneticFieldGravityAndEuler)
   EXPECT_NEAR(eulers->front().data, M_PI / 2.0, 1e-4);
 }
 
+TEST_F(ImuNodeTest, TemperatureVarianceIsStddevSquared)
+{
+  Harness harness(fake_, {rclcpp::Parameter("temperature_stddev", 2.0)});
+  auto temperatures = harness.subscribe<sensor_msgs::msg::Temperature>("temperature");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData data;
+  data.temperature = 25;
+
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(data);
+        return temperatures->size() > 0;
+      },
+      kMessageDeadline)) << "no Temperature message received";
+
+  EXPECT_DOUBLE_EQ(temperatures->front().variance, 4.0);
+}
+
+TEST_F(ImuNodeTest, TemperatureVarianceIsZeroWhenStddevIsZero)
+{
+  // 0.0 is the sensor_msgs/Temperature convention for "variance unknown", so a stddev of 0
+  // must pass straight through rather than being replaced by a default.
+  Harness harness(fake_, {rclcpp::Parameter("temperature_stddev", 0.0)});
+  auto temperatures = harness.subscribe<sensor_msgs::msg::Temperature>("temperature");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  AllData data;
+  data.temperature = 25;
+
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(data);
+        return temperatures->size() > 0;
+      },
+      kMessageDeadline)) << "no Temperature message received";
+
+  EXPECT_DOUBLE_EQ(temperatures->front().variance, 0.0);
+}
+
+TEST_F(ImuNodeTest, NegativeTemperatureStddevIsRejected)
+{
+  Harness harness(fake_);
+
+  const auto results =
+    harness.node->set_parameters({rclcpp::Parameter("temperature_stddev", -1.0)});
+  ASSERT_EQ(results.size(), 1u);
+  EXPECT_FALSE(results[0].successful);
+  EXPECT_NE(results[0].reason.find("temperature_stddev"), std::string::npos);
+}
+
 TEST_F(ImuNodeTest, DiagnosticsReportsCalibrationWarning)
 {
   Harness harness(fake_);
