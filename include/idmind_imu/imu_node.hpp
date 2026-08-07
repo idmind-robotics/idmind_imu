@@ -40,8 +40,6 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/magnetic_field.hpp"
 #include "sensor_msgs/msg/temperature.hpp"
-#include "std_msgs/msg/float32.hpp"
-#include "std_msgs/msg/u_int8_multi_array.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 namespace idmind_imu
@@ -76,6 +74,10 @@ public:
 
   /// Return a snapshot of the driver's connection and device status, for tests.
   DriverState driver_state() const;
+
+  /// Number of watchdog ticks observed so far, for tests: proves the watchdog is still
+  /// running without depending on a topic or the independently-timed diagnostics Updater.
+  size_t watchdog_tick_count() const;
 
 private:
   /// The node-side parameters one publish pass needs, snapshotted together under the lock.
@@ -144,7 +146,7 @@ private:
     const rclcpp::Time & stamp, const std::array<double, 3> & gravity,
     const PublishParams & params);
 
-  /// Publish the heartbeat and check data staleness. Never performs hardware I/O.
+  /// Record a tick and check data staleness. Never performs hardware I/O.
   void watchdog();
 
   /// Recreate the watchdog timer at \p control_freq (rclcpp has no timer period setter).
@@ -193,6 +195,10 @@ private:
   RollingVariance magnetic_field_noise_{100};
   RollingVariance orientation_noise_{100, AngleWrap::Radians};
   std::chrono::steady_clock::time_point last_watchdog_{std::chrono::steady_clock::now()};
+  /// The watchdog's last measured tick period, surfaced as the "loop_period_s" diagnostic key.
+  double last_watchdog_period_{0.0};
+  /// Ticks observed so far; read by watchdog_tick_count() for tests.
+  size_t watchdog_tick_count_{0};
 
   bool ready_{false};
 
@@ -204,18 +210,11 @@ private:
 
   // -- ROS entities --------------------------------------------------------------------------
 
-  rclcpp::CallbackGroup::SharedPtr pub_callbacks_;
-  rclcpp::CallbackGroup::SharedPtr srv_callbacks_;
-  rclcpp::CallbackGroup::SharedPtr main_callbacks_;
-
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr ready_service_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Temperature>::SharedPtr temp_pub_;
   rclcpp::Publisher<sensor_msgs::msg::MagneticField>::SharedPtr mag_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr euler_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr gravity_pub_;
-  rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr calib_pub_;
-  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr timer_pub_;
 
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;

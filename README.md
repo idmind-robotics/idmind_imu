@@ -113,13 +113,10 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 
 | Topic | Type | Notes |
 |---|---|---|
-| `~/imu` | `sensor_msgs/Imu` | Orientation, angular velocity (rad/s), linear acceleration (m/s²) |
+| `~/imu` | `sensor_msgs/Imu` | Orientation (quaternion), angular velocity (rad/s), linear acceleration (m/s²) |
 | `~/temperature` | `sensor_msgs/Temperature` | Sensor temperature (°C); `variance` from `temperature_stddev` |
 | `~/magnetic_field` | `sensor_msgs/MagneticField` | Tesla |
-| `~/euler` | `std_msgs/Float32` | **Yaw only, in radians** |
 | `~/gravity` | `geometry_msgs/Vector3Stamped` | Gravity vector (m/s²) |
-| `~/calibration` | `std_msgs/UInt8MultiArray` | `[sys, gyro, acc, mag]`, each 0–3 |
-| `~/timer` | `std_msgs/Float32` | Watchdog heartbeat: measured loop period (s) |
 | `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | Published at 1 Hz by `diagnostic_updater` |
 
 ### Services
@@ -180,8 +177,11 @@ orientation de-weighted during warm-up.
 ### Diagnostics
 
 Three tasks are published: **Connection** (transport reachable, device enumerated),
-**Data flow** (observed rate and age of the last sample; `ERROR` past `timeout`), and
-**Calibration** (`WARN` while any of sys/gyro/acc/mag is 0).
+**Data flow** (observed rate and age of the last sample; `ERROR` past `timeout`; also reports
+`loop_period_s`, the watchdog's own measured tick period — a leading indicator of an executor
+stall, since it moves at `control_freq` while the rest of this task only resolves at the
+Updater's 1 Hz rate), and **Calibration** (`sys`/`gyro`/`acc`/`mag` as named values; `WARN`
+while any of them is 0).
 
 ---
 

@@ -46,8 +46,6 @@ struct ImuSample
 {
   /// Orientation as ROS (x, y, z, w).
   std::optional<std::array<double, 4>> orientation;
-  /// Whether the orientation is meaningful at all (false when sensor fusion is off).
-  bool orientation_valid{false};
   /// Angular velocity (x, y, z) in rad/s.
   std::optional<std::array<double, 3>> angular_velocity;
   /// Linear acceleration (x, y, z) in m/s^2.
@@ -86,8 +84,6 @@ struct DriverConfig
   bool auto_reconnect{true};
   /// Which device field to report as linear_acceleration: "linear" or "raw".
   std::string acceleration_source{"linear"};
-  /// Base orientation standard deviation at full calibration.
-  double orientation_stddev{0.01};
 };
 
 /// A snapshot of a driver's connection and device status, for diagnostics.

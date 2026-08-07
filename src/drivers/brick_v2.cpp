@@ -356,7 +356,6 @@ void ImuBrickV2Driver::on_all_data(
 
     ImuSample sample;
     sample.orientation = conversions::quaternion_from_brick(to_array<4>(quaternion));
-    sample.orientation_valid = (fusion_mode != 0);
     sample.angular_velocity =
       conversions::angular_velocity_from_brick(to_array<3>(angular_velocity));
     sample.linear_acceleration = linear;
@@ -489,7 +488,17 @@ void ImuBrickV2Driver::apply_data_period(IMUV2 * imu, const DriverConfig & confi
       logger_, "IMU brick: invalid imu_freq %f, skipping data period update", config.imu_freq);
     return;
   }
-  const uint32_t desired = static_cast<uint32_t>(1000.0 / config.imu_freq);
+  // A period of 0 tells the device to disable the callback entirely, so any imu_freq above
+  // 1000 Hz - which truncates to 0 here - must be clamped rather than silently killing the
+  // stream.
+  const double raw_period = 1000.0 / config.imu_freq;
+  uint32_t desired = static_cast<uint32_t>(raw_period);
+  if (desired < 1) {
+    RCLCPP_WARN(
+      logger_, "IMU brick: imu_freq %f would disable the data callback, clamping period to 1ms",
+      config.imu_freq);
+    desired = 1;
+  }
 
   uint32_t current = 0;
   int result = imu_v2_get_all_data_period(imu, &current);

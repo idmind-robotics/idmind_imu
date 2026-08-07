@@ -17,7 +17,7 @@
 ///
 /// These exercise the real node (brick_v2 driver, real ROS publishers and service) with no
 /// hardware and no brickd: the fake stands in for BrickDaemon on an ephemeral port. The node
-/// runs under a MultiThreadedExecutor on a background thread; a separate subscriber node
+/// runs under a SingleThreadedExecutor on a background thread; a separate subscriber node
 /// receives its topics. Every wait has a hard deadline, so a regression shows up as a fast,
 /// clear failure instead of a hang.
 
@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cmath>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -40,8 +41,6 @@
 #include "idmind_imu/imu_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
-#include "std_msgs/msg/float32.hpp"
-#include "std_msgs/msg/u_int8_multi_array.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 using idmind_imu::ImuNode;
@@ -128,7 +127,7 @@ public:
     node = std::make_shared<ImuNode>(options);
     subscriber = std::make_shared<rclcpp::Node>("test_imu_node_subscriber");
 
-    executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+    executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
     executor->add_node(node);
     executor->add_node(subscriber);
     spin_thread = std::thread([this] {executor->spin();});
@@ -168,7 +167,7 @@ public:
 
   std::shared_ptr<ImuNode> node;
   std::shared_ptr<rclcpp::Node> subscriber;
-  std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor;
+  std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> executor;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions;
   std::thread spin_thread;
 };
@@ -390,54 +389,68 @@ TEST_F(ImuNodeTest, StddevParameterMustHaveThreeElements)
   EXPECT_NE(results[0].reason.find("3 elements"), std::string::npos);
 }
 
-TEST_F(ImuNodeTest, CalibrationTopicPreservesFieldOrder)
+TEST_F(ImuNodeTest, DiagnosticsCalibrationPreservesFieldOrder)
 {
+  // Calibration has no dedicated topic - /diagnostics is the semantic replacement, reporting
+  // sys/gyro/acc/mag as named key-values rather than an unlabeled array.
   Harness harness(fake_);
-  auto calibrations = harness.subscribe<std_msgs::msg::UInt8MultiArray>("calibration");
+  auto diagnostics = std::make_shared<Collector<diagnostic_msgs::msg::DiagnosticArray>>();
+  auto subscription = harness.subscriber->create_subscription<
+    diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics", 10,
+    [diagnostics](const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg) {
+      diagnostics->add(msg);
+    });
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 
   AllData data;
   data.calibration_status = 0b11100100;  // sys=3, gyro=2, acc=1, mag=0
 
-  ASSERT_TRUE(
-    wait_until(
-      [&] {
-        fake_.push_all_data(data);
-        return calibrations->size() > 0;
-      },
-      kMessageDeadline)) << "no calibration message received";
+  std::map<std::string, std::string> values;
+  const bool seen = wait_until(
+    [&] {
+      fake_.push_all_data(data);
+      for (const auto & msg : diagnostics->all()) {
+        for (const auto & status : msg.status) {
+          if (status.name.find("Calibration") != std::string::npos) {
+            values.clear();
+            for (const auto & kv : status.values) {
+              values[kv.key] = kv.value;
+            }
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+    kMessageDeadline);
 
+  ASSERT_TRUE(seen) << "no calibration diagnostic seen";
   // Four distinct levels, so a wrong field order cannot pass this assertion.
-  const auto msg = calibrations->front();
-  ASSERT_EQ(msg.data.size(), 4u);
-  EXPECT_EQ(msg.data[0], 3);
-  EXPECT_EQ(msg.data[1], 2);
-  EXPECT_EQ(msg.data[2], 1);
-  EXPECT_EQ(msg.data[3], 0);
+  EXPECT_EQ(values["sys"], "3");
+  EXPECT_EQ(values["gyro"], "2");
+  EXPECT_EQ(values["acc"], "1");
+  EXPECT_EQ(values["mag"], "0");
 }
 
-TEST_F(ImuNodeTest, PublishesTemperatureMagneticFieldGravityAndEuler)
+TEST_F(ImuNodeTest, PublishesTemperatureMagneticFieldAndGravity)
 {
   Harness harness(fake_);
   auto temperatures = harness.subscribe<sensor_msgs::msg::Temperature>("temperature");
   auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
   auto gravities = harness.subscribe<geometry_msgs::msg::Vector3Stamped>("gravity");
-  auto eulers = harness.subscribe<std_msgs::msg::Float32>("euler");
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 
   AllData data;
   data.temperature = 25;
   data.magnetic_field = {16, 0, 0};
   data.gravity_vector = {0, 0, 981};
-  data.euler_angle = {16 * 90, 0, 0};  // heading = 90 degrees
 
   ASSERT_TRUE(
     wait_until(
       [&] {
         fake_.push_all_data(data);
-        const bool scalars_ok = temperatures->size() > 0 && eulers->size() > 0;
-        const bool vectors_ok = fields->size() > 0 && gravities->size() > 0;
-        return scalars_ok && vectors_ok;
+        return temperatures->size() > 0 && fields->size() > 0 && gravities->size() > 0;
       },
       kMessageDeadline)) << "not every derived topic was published";
 
@@ -445,8 +458,6 @@ TEST_F(ImuNodeTest, PublishesTemperatureMagneticFieldGravityAndEuler)
   EXPECT_EQ(temperatures->front().header.frame_id, "imu");
   EXPECT_NEAR(fields->front().magnetic_field.x, 1e-6, 1e-15);
   EXPECT_NEAR(gravities->front().vector.z, 9.81, 1e-6);
-  // The euler topic carries yaw in radians, not degrees.
-  EXPECT_NEAR(eulers->front().data, M_PI / 2.0, 1e-4);
 }
 
 TEST_F(ImuNodeTest, TemperatureVarianceIsStddevSquared)
@@ -600,14 +611,15 @@ TEST_F(ImuNodeTest, ImuFrameParameterIsHonoured)
   EXPECT_EQ(imu_messages->front().header.frame_id, "imu2");
 }
 
-TEST_F(ImuNodeTest, HeartbeatIsPublishedOnTheTimerTopic)
+TEST_F(ImuNodeTest, WatchdogTicksRegularly)
 {
+  // There is no ~/timer topic; the watchdog's own tick count (exposed for tests, like
+  // driver_state()) is the direct way to observe it running, independent of the diagnostics
+  // Updater's separate 1 Hz timer.
   Harness harness(fake_, {rclcpp::Parameter("control_freq", 50.0)});
-  auto heartbeats = harness.subscribe<std_msgs::msg::Float32>("timer");
 
-  ASSERT_TRUE(wait_until([&] {return heartbeats->size() >= 3;}, kMessageDeadline))
-    << "watchdog heartbeat was not published";
-  EXPECT_GT(heartbeats->front().data, 0.0f);
+  ASSERT_TRUE(wait_until([&] {return harness.node->watchdog_tick_count() >= 3;}, kMessageDeadline))
+    << "watchdog did not tick";
 }
 
 TEST_F(ImuNodeTest, ReadyServiceReportsReady)
@@ -662,14 +674,14 @@ TEST_F(ImuNodeTest, WatchdogSurvivesAndKeepsRunningWithoutData)
   // arriving it logs a warning every tick and must keep ticking regardless.
   Harness harness(fake_, {rclcpp::Parameter("control_freq", 50.0),
       rclcpp::Parameter("timeout", 0.05)});
-  auto heartbeats = harness.subscribe<std_msgs::msg::Float32>("timer");
 
-  ASSERT_TRUE(wait_until([&] {return heartbeats->size() >= 5;}, kMessageDeadline))
+  ASSERT_TRUE(wait_until([&] {return harness.node->watchdog_tick_count() >= 5;}, kMessageDeadline))
     << "watchdog stopped ticking";
-  const size_t after_first = heartbeats->size();
+  const size_t after_first = harness.node->watchdog_tick_count();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  EXPECT_GT(heartbeats->size(), after_first) << "watchdog stopped ticking after the timeout";
+  EXPECT_GT(harness.node->watchdog_tick_count(), after_first)
+    << "watchdog stopped ticking after the timeout";
 }
 
 int main(int argc, char ** argv)

@@ -131,10 +131,6 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
 {
   const std::string node_prefix = std::string(this->get_name()) + "/";
 
-  pub_callbacks_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-  srv_callbacks_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-  main_callbacks_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-
   // -- Parameters ---------------------------------------------------------------------------
   driver_name_ = this->declare_parameter<std::string>(
     "driver", "brick_v2", describe("Name of the IMU driver backend to use"));
@@ -215,28 +211,19 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
     // Humble's create_service only takes an rmw_qos_profile_t here; Iron onwards deprecates
     // that overload in favour of rclcpp::QoS. Pick by rclcpp version so both build warning-free.
 #if RCLCPP_VERSION_MAJOR >= 21
-    rclcpp::ServicesQoS(), srv_callbacks_);
+    rclcpp::ServicesQoS());
 #else
-    rmw_qos_profile_services_default, srv_callbacks_);
+    rmw_qos_profile_services_default);
 #endif
 
   // -- Publishers ----------------------------------------------------------------------------
-  rclcpp::PublisherOptions pub_options;
-  pub_options.callback_group = pub_callbacks_;
-
-  imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(node_prefix + "imu", 10, pub_options);
+  imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(node_prefix + "imu", 10);
   temp_pub_ = this->create_publisher<sensor_msgs::msg::Temperature>(
-    node_prefix + "temperature", 10, pub_options);
+    node_prefix + "temperature", 10);
   mag_pub_ = this->create_publisher<sensor_msgs::msg::MagneticField>(
-    node_prefix + "magnetic_field", 10, pub_options);
-  euler_pub_ = this->create_publisher<std_msgs::msg::Float32>(
-    node_prefix + "euler", 10, pub_options);
+    node_prefix + "magnetic_field", 10);
   gravity_pub_ = this->create_publisher<geometry_msgs::msg::Vector3Stamped>(
-    node_prefix + "gravity", 10, pub_options);
-  calib_pub_ = this->create_publisher<std_msgs::msg::UInt8MultiArray>(
-    node_prefix + "calibration", 10, pub_options);
-  timer_pub_ = this->create_publisher<std_msgs::msg::Float32>(
-    node_prefix + "timer", 10, pub_options);
+    node_prefix + "gravity", 10);
 
   // -- Driver ---------------------------------------------------------------------------------
   driver_ = make_driver(
@@ -364,7 +351,6 @@ DriverConfig ImuNode::driver_config() const
   config.imu_fusion_mode = imu_fusion_mode_;
   config.auto_reconnect = auto_reconnect_;
   config.acceleration_source = acceleration_source_;
-  config.orientation_stddev = orientation_stddev_;
   return config;
 }
 
@@ -441,7 +427,6 @@ rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
         return result;
       }
       orientation_stddev_ = parameter.as_double();
-      driver_config_changed = true;
     } else if (name == "temperature_stddev") {
       if (parameter.as_double() < 0.0) {
         result.successful = false;
@@ -530,20 +515,8 @@ void ImuNode::on_sample(const ImuSample & sample)
     publish_magnetic_field(stamp, *sample.magnetic_field, sample.calibration, params);
   }
 
-  if (sample.euler.has_value()) {
-    std_msgs::msg::Float32 euler_msg;
-    euler_msg.data = static_cast<float>((*sample.euler)[2]);
-    euler_pub_->publish(euler_msg);
-  }
-
   if (sample.gravity.has_value()) {
     publish_gravity(stamp, *sample.gravity, params);
-  }
-
-  if (sample.calibration.has_value()) {
-    std_msgs::msg::UInt8MultiArray calib_msg;
-    calib_msg.data.assign(sample.calibration->begin(), sample.calibration->end());
-    calib_pub_->publish(calib_msg);
   }
 }
 
@@ -649,25 +622,27 @@ void ImuNode::restart_watchdog_timer(double control_freq)
   const auto period = std::chrono::duration<double>(1.0 / control_freq);
   watchdog_timer_ = this->create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
-    [this]() {this->watchdog();},
-    main_callbacks_);
+    [this]() {this->watchdog();});
+}
+
+size_t ImuNode::watchdog_tick_count() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return watchdog_tick_count_;
 }
 
 void ImuNode::watchdog()
 {
   try {
     const auto now = std::chrono::steady_clock::now();
-    const double period = seconds_between(last_watchdog_, now);
-    last_watchdog_ = now;
-
-    std_msgs::msg::Float32 heartbeat;
-    heartbeat.data = static_cast<float>(period);
-    timer_pub_->publish(heartbeat);
 
     std::optional<std::chrono::steady_clock::time_point> last_sample;
     double timeout = 0.0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      last_watchdog_period_ = seconds_between(last_watchdog_, now);
+      last_watchdog_ = now;
+      ++watchdog_tick_count_;
       last_sample = last_sample_;
       timeout = timeout_;
     }
@@ -707,11 +682,13 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
   std::optional<std::chrono::steady_clock::time_point> last_sample;
   std::deque<std::chrono::steady_clock::time_point> sample_times;
   double timeout = 0.0;
+  double loop_period = 0.0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_sample = last_sample_;
     sample_times = sample_times_;
     timeout = timeout_;
+    loop_period = last_watchdog_period_;
   }
 
   const bool have_age = last_sample.has_value();
@@ -733,6 +710,9 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
 
   stat.add("rate_hz", two_decimals(rate));
   stat.add("age_s", have_age ? two_decimals(age) : std::string("n/a"));
+  // The watchdog's own measured tick period - a leading indicator of executor stalls, since
+  // it moves at control_freq while the rest of this task only resolves at the 1 Hz Updater rate.
+  stat.add("loop_period_s", two_decimals(loop_period));
 }
 
 void ImuNode::diagnose_calibration(diagnostic_updater::DiagnosticStatusWrapper & stat)

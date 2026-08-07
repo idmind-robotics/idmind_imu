@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// \file
-/// Entry point: spins an ``ImuNode`` under a multi-threaded executor until interrupted.
+/// Entry point: spins an ``ImuNode`` under a single-threaded executor until interrupted.
 
 #include <memory>
 
@@ -36,7 +36,7 @@ int main(int argc, char ** argv)
       return 1;
     }
 
-    rclcpp::executors::MultiThreadedExecutor executor;
+    rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
     try {
       executor.spin();

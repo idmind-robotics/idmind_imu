@@ -180,23 +180,6 @@ TEST(NoiseEstimator, CircularMeanSitsBetweenWrappedValues)
   EXPECT_NEAR(std::fabs(circular.mean()[2]), M_PI, 1e-6);
 }
 
-TEST(NoiseEstimator, SetWindowShrinksAndInvalidates)
-{
-  RollingVariance estimator(10);
-  for (int i = 0; i < 10; ++i) {
-    estimator.push({1.0, 2.0, 3.0});
-  }
-  ASSERT_TRUE(estimator.ready());
-
-  estimator.set_window(4);
-  EXPECT_EQ(estimator.window(), 4u);
-  EXPECT_EQ(estimator.size(), 4u);
-  EXPECT_TRUE(estimator.ready());
-
-  estimator.set_window(50);
-  EXPECT_FALSE(estimator.ready()) << "a grown window must refill before reporting again";
-}
-
 TEST(NoiseEstimator, WindowIsClampedToAUsableMinimum)
 {
   // Sample variance needs at least two points; a window of 0 or 1 must not divide by zero.

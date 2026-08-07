@@ -15,7 +15,6 @@
 #include "idmind_imu/conversions.hpp"
 
 #include <cmath>
-#include <map>
 
 namespace idmind_imu
 {

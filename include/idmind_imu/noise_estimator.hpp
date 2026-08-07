@@ -60,9 +60,6 @@ public:
   /// Drop every stored sample, e.g. when the window size changes.
   void reset();
 
-  /// Resize the window, discarding the oldest samples if it shrank.
-  void set_window(size_t window);
-
   /// How many samples are currently stored.
   size_t size() const {return samples_.size();}
 

@@ -48,18 +48,6 @@ void RollingVariance::reset()
   samples_.clear();
 }
 
-void RollingVariance::set_window(size_t window)
-{
-  const size_t clamped = std::max<size_t>(window, 2);
-  if (clamped == window_) {
-    return;
-  }
-  window_ = clamped;
-  while (samples_.size() > window_) {
-    samples_.pop_front();
-  }
-}
-
 std::array<double, 3> RollingVariance::mean() const
 {
   std::array<double, 3> result{0.0, 0.0, 0.0};
