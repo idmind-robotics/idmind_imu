@@ -19,6 +19,10 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
+  <!-- tinkerforge_c_bindings has no rosdep key; CMakeLists.txt FetchContent-fetches a pinned
+       release (version + SHA256) at configure time, or set -DTINKERFORGE_C_BINDINGS_DIR to
+       point at a local copy. -->
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>ament_cmake_gtest</test_depend>
