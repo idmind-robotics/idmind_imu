@@ -5,7 +5,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 from std_msgs.msg import Float32, UInt8MultiArray
 from sensor_msgs.msg import MagneticField, Temperature, Imu
 from geometry_msgs.msg import Vector3Stamped
@@ -75,9 +75,14 @@ class IDMindImuBrick(Node):
         self._config_timer = None
         # Flag to gracefully stop the main loop during shutdown
         self._shutdown_in_progress = False
+        # When True, publish_imu skips publishing but keeps the data-freshness bookkeeping,
+        # so the main_loop watchdog does not report a false timeout. Toggled by ~/standby.
+        self.standby = False
 
         # Services
         self.create_service(Trigger, node_prefix + "ready", self.report_ready,
+                            callback_group=self.srv_callbacks)
+        self.create_service(SetBool, node_prefix + "standby", self.set_standby,
                             callback_group=self.srv_callbacks)
         # Publishers
         self.imu_pub = self.create_publisher(Imu, node_prefix + "imu", 10,
@@ -125,6 +130,16 @@ class IDMindImuBrick(Node):
         self.log("Replying to 'ready' request", 2)
         resp.success = self.ready
         resp.message = self.get_name() + " is " + ("ready" if self.ready else "not ready")
+        return resp
+
+    def set_standby(self, req, resp):
+        """Enter or leave standby: data=True suspends publishing, data=False resumes it."""
+        self.standby = req.data
+        state = "enabled" if req.data else "disabled"
+        self.log("Standby {}".format(state), 2)
+        resp.success = True
+        resp.message = "standby {}: data-topic publishing {}".format(
+            state, "suspended" if req.data else "resumed")
         return resp
 
     def update_parameters(self, params):
@@ -197,6 +212,12 @@ class IDMindImuBrick(Node):
         """Registered for BrickIMUV2.CALLBACK_ALL_DATA — runs in a TinkerForge thread."""
         try:
             now = self.get_clock().now().to_msg()
+
+            # In standby, drop the sample without publishing but keep tracking data
+            # freshness so the main_loop watchdog does not raise a false timeout.
+            if self.standby:
+                self.last_imu_msg = now
+                return
 
             # --- IMU message ---
             imu_msg = Imu()
