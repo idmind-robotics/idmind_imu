@@ -41,6 +41,7 @@
 #include "idmind_imu/imu_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 using idmind_imu::ImuNode;
@@ -682,6 +683,58 @@ TEST_F(ImuNodeTest, WatchdogSurvivesAndKeepsRunningWithoutData)
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
   EXPECT_GT(harness.node->watchdog_tick_count(), after_first)
     << "watchdog stopped ticking after the timeout";
+}
+
+TEST_F(ImuNodeTest, StandbyServiceSuspendsAndResumesPublishing)
+{
+  Harness harness(fake_);
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  auto client =
+    harness.subscriber->create_client<std_srvs::srv::SetBool>("/idmind_imu/standby");
+  ASSERT_TRUE(client->wait_for_service(std::chrono::seconds(10)))
+    << "standby service never came up";
+
+  auto call_standby = [&](bool enable) {
+      auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+      request->data = enable;
+      auto future = client->async_send_request(request);
+      EXPECT_EQ(future.wait_for(std::chrono::seconds(10)), std::future_status::ready)
+        << "standby service did not answer";
+      EXPECT_TRUE(future.get()->success);
+    };
+
+  // Publishing works before standby.
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(AllData{});
+        return imu_messages->size() > 0;
+      },
+      kMessageDeadline)) << "no Imu message before standby";
+
+  call_standby(true);
+  ASSERT_TRUE(wait_until([&] {return harness.node->standby();}, kMessageDeadline));
+
+  // Let any sample already in flight drain, then require the count to stay put while more
+  // samples keep arriving from the fake device.
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  const size_t count_at_standby = imu_messages->size();
+  for (int i = 0; i < 20; ++i) {
+    fake_.push_all_data(AllData{});
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  EXPECT_EQ(imu_messages->size(), count_at_standby) << "node published while in standby";
+
+  call_standby(false);
+  EXPECT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(AllData{});
+        return imu_messages->size() > count_at_standby;
+      },
+      kMessageDeadline)) << "publishing did not resume after standby was disabled";
 }
 
 int main(int argc, char ** argv)

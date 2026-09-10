@@ -212,9 +212,11 @@ rate measurement.
 
 - Parameters declared with `ParameterDescriptor` (see the `describe()` helper), read
   immediately via `declare_parameter<T>()`'s return value.
-- Node exposes a `ready` `Trigger` service, an `add_on_set_parameters_callback` handler, and
-  a `timer` heartbeat topic. Use `log(msg, "warn")` (duplicate-suppressing) rather than
-  `RCLCPP_*` directly in node code. Drivers use `RCLCPP_*` on their own logger.
+- Node exposes a `ready` `Trigger` service, a `standby` `SetBool` service (suspends data-topic
+  publishing without stopping the driver — `on_sample` still runs its bookkeeping), an
+  `add_on_set_parameters_callback` handler, and a `timer` heartbeat topic. Use
+  `log(msg, "warn")` (duplicate-suppressing) rather than `RCLCPP_*` directly in node code.
+  Drivers use `RCLCPP_*` on their own logger.
 - Diagnostics go through `diagnostic_updater::Updater`, which publishes `/diagnostics` on its
   own 1 Hz timer. Do **not** call `force_update()` from the watchdog — that would republish
   at `control_freq`.

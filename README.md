@@ -124,6 +124,7 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 | Name | Type | Description |
 |---|---|---|
 | `~/ready` | `std_srvs/Trigger` | Reports whether the node finished initialising |
+| `~/standby` | `std_srvs/SetBool` | `data: true` suspends all data-topic publishing; `data: false` resumes it. Samples keep arriving from the driver while suspended, so the watchdog, diagnostics and the noise estimate stay live (the `standby` key in the "Data flow" diagnostic reflects the current state). |
 
 ### Covariances
 
