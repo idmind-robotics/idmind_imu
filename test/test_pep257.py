@@ -16,8 +16,13 @@ from ament_pep257.main import main
 import pytest
 
 
+# imu_brick_node.py is the frozen legacy node (see CLAUDE.md): kept for reference, started
+# by no launch file, and deliberately not restyled. New code is held to the linters.
+_EXCLUDE = ['idmind_imu/imu_brick_node.py']
+
+
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257():
-    rc = main(argv=['.', 'test'])
+    rc = main(argv=['.', 'test', '--exclude', *_EXCLUDE])
     assert rc == 0, 'Found code style errors / warnings'

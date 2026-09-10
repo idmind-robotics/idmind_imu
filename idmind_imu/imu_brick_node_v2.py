@@ -108,8 +108,10 @@ class IDMindImuBrick(Node):
         self.imu = None
         self.ipcon = IPConnection()
         self.ipcon.set_auto_reconnect(self.auto_reconnect)
-        self.ipcon.register_callback(IPConnection.CALLBACK_CONNECTED, self.brick_daemon_connection)
-        self.ipcon.register_callback(IPConnection.CALLBACK_DISCONNECTED, self.brick_daemon_disconnection)
+        self.ipcon.register_callback(
+            IPConnection.CALLBACK_CONNECTED, self.brick_daemon_connection)
+        self.ipcon.register_callback(
+            IPConnection.CALLBACK_DISCONNECTED, self.brick_daemon_disconnection)
 
         self.last_imu_msg = None
         self.in_loop = False
@@ -126,7 +128,7 @@ class IDMindImuBrick(Node):
     ###################
 
     def report_ready(self, _req, resp):
-        """Simple service callback to confirm the node is alive."""
+        """Report whether the node has finished initialising."""
         self.log("Replying to 'ready' request", 2)
         resp.success = self.ready
         resp.message = self.get_name() + " is " + ("ready" if self.ready else "not ready")
@@ -165,14 +167,14 @@ class IDMindImuBrick(Node):
         return SetParametersResult(successful=True)
 
     def brick_daemon_connection(self, reason):
-        """Registered for IPConnection.CALLBACK_CONNECTED."""
+        """Handle IPConnection.CALLBACK_CONNECTED by enumerating for the IMU Brick."""
         self.log("Connected to BrickDaemon", 2)
         self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, self.enumerate_callback)
         self.ipcon.enumerate()
         return True
 
     def brick_daemon_disconnection(self, reason):
-        """Registered for IPConnection.CALLBACK_DISCONNECTED."""
+        """Handle IPConnection.CALLBACK_DISCONNECTED by dropping the cached IMU handle."""
         self.log("Disconnected from BrickDaemon", 2, alert="warn")
         with self._imu_lock:
             self.imu = None
@@ -181,7 +183,7 @@ class IDMindImuBrick(Node):
 
     def enumerate_callback(self, uid, con_uid, pos, hd_version, firmware_version,
                            device_identifier, enumeration_type):
-        """Registered for IPConnection.CALLBACK_ENUMERATE."""
+        """Handle IPConnection.CALLBACK_ENUMERATE by binding to the IMU Brick."""
         if enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
             self.log("IMU Brick disconnected during enumeration", 2)
             return
@@ -209,7 +211,11 @@ class IDMindImuBrick(Node):
 
     def publish_imu(self, acc, mag, ang_vel, euler, quat, linear_acc, gravity, temp,
                     calibration_status):
-        """Registered for BrickIMUV2.CALLBACK_ALL_DATA — runs in a TinkerForge thread."""
+        """
+        Convert one IMU sample into ROS messages and publish it.
+
+        Registered for ``BrickIMUV2.CALLBACK_ALL_DATA`` and runs on a TinkerForge thread.
+        """
         try:
             now = self.get_clock().now().to_msg()
 
@@ -281,10 +287,10 @@ class IDMindImuBrick(Node):
 
             # --- Calibration status [sys, gyro, acc, mag], each 0–3 ---
             # calibration_status is a uint8 bitmask: bits[7:6]=sys,[5:4]=gyro,[3:2]=acc,[1:0]=mag
-            cal_sys  = (calibration_status >> 6) & 0x03
+            cal_sys = (calibration_status >> 6) & 0x03
             cal_gyro = (calibration_status >> 4) & 0x03
-            cal_acc  = (calibration_status >> 2) & 0x03
-            cal_mag  = (calibration_status >> 0) & 0x03
+            cal_acc = (calibration_status >> 2) & 0x03
+            cal_mag = (calibration_status >> 0) & 0x03
             calib_list = [cal_sys, cal_gyro, cal_acc, cal_mag]
             calib_msg = UInt8MultiArray()
             calib_msg.data = calib_list
@@ -387,7 +393,8 @@ class IDMindImuBrick(Node):
         return True
 
     def connect_brick_daemon(self):
-        """Spawn a background thread for the initial (blocking) ipcon.connect() call.
+        """
+        Spawn a background thread for the initial (blocking) ipcon.connect() call.
 
         Guards against spawning multiple threads if a connection attempt is already
         in progress.
@@ -403,7 +410,7 @@ class IDMindImuBrick(Node):
         return True
 
     def _connect_with_exception_handling(self):
-        """Wrapper for ipcon.connect() that handles exceptions gracefully."""
+        """Run ipcon.connect(), swallowing the failure when brickd is not up yet."""
         try:
             self.ipcon.connect(self.host, self.port)
         except Exception:
@@ -412,7 +419,8 @@ class IDMindImuBrick(Node):
             pass
 
     def update_config(self):
-        """Read current IMU config and apply any pending parameter changes.
+        """
+        Read current IMU config and apply any pending parameter changes.
 
         Acquires a local reference to self.imu under the lock so hardware I/O
         is performed outside the lock.
@@ -513,7 +521,7 @@ def main(args=None):
     try:
         executor.spin()
     except KeyboardInterrupt:
-        print('\033[91m' + "Shutting down IMUBrick Node" + '\033[0m')
+        imu_node.get_logger().info("Shutting down IMU Brick node")
     finally:
         executor.shutdown()
         imu_node.shutdown()
