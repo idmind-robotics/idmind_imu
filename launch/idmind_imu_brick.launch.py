@@ -24,17 +24,25 @@ from launch_ros.actions import Node
 def generate_launch_description():
     ld = LaunchDescription()
 
-    # Robot name
-    default_robot_name = ""
-    robot_name = DeclareLaunchArgument(name="robot_name", default_value=default_robot_name, description="Name of this robot, used for namespacing")    
-    ld.add_action(robot_name)    
+    # Robot name, used for namespacing
+    robot_name = DeclareLaunchArgument(
+        name='robot_name', default_value='',
+        description='Name of this robot, used for namespacing'
+    )
+    ld.add_action(robot_name)
 
-    # Simulation
-    simulation = DeclareLaunchArgument(name="simulation", default_value="False", description="Is the robot in simulation?")    
-    ld.add_action(simulation)    
+    simulation = DeclareLaunchArgument(
+        name='simulation', default_value='False',
+        description='Is the robot in simulation?'
+    )
+    ld.add_action(simulation)
 
-    def_imu_cfg = os.path.join(get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml')
-    imu_cfg = DeclareLaunchArgument(name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU')
+    def_imu_cfg = os.path.join(
+        get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml'
+    )
+    imu_cfg = DeclareLaunchArgument(
+        name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU'
+    )
     ld.add_action(imu_cfg)
 
     imu_node = Node(

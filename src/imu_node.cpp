@@ -216,6 +216,19 @@ ImuNode::ImuNode(const rclcpp::NodeOptions & options)
     rmw_qos_profile_services_default);
 #endif
 
+  standby_service_ = this->create_service<std_srvs::srv::SetBool>(
+    node_prefix + "standby",
+    [this](
+      const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+      std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+      this->set_standby(request, response);
+    },
+#if RCLCPP_VERSION_MAJOR >= 21
+    rclcpp::ServicesQoS());
+#else
+    rmw_qos_profile_services_default);
+#endif
+
   // -- Publishers ----------------------------------------------------------------------------
   imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(node_prefix + "imu", 10);
   temp_pub_ = this->create_publisher<sensor_msgs::msg::Temperature>(
@@ -366,6 +379,27 @@ void ImuNode::report_ready(
     std::string(this->get_name()) + " is " + (ready_ ? "ready" : "not ready");
 }
 
+void ImuNode::set_standby(
+  const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+  std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    standby_ = request->data;
+  }
+  response->success = true;
+  response->message = request->data ?
+    "standby enabled: data-topic publishing suspended" :
+    "standby disabled: data-topic publishing resumed";
+  log(response->message);
+}
+
+bool ImuNode::standby() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return standby_;
+}
+
 rcl_interfaces::msg::SetParametersResult ImuNode::update_parameters(
   const std::vector<rclcpp::Parameter> & parameters)
 {
@@ -486,6 +520,7 @@ void ImuNode::on_sample(const ImuSample & sample)
   // by update_parameters on an executor thread, so reading them straight off the members from
   // this driver thread would be a data race - and a torn std::string read is not theoretical.
   PublishParams params;
+  bool standby = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -499,6 +534,13 @@ void ImuNode::on_sample(const ImuSample & sample)
     }
     update_noise_estimators_locked(sample);
     params = publish_params_locked();
+    standby = standby_;
+  }
+
+  // Standby suppresses only publishing: the bookkeeping above still runs, so the watchdog,
+  // diagnostics and the noise estimate stay current and resuming is seamless.
+  if (standby) {
+    return;
   }
 
   if (sample.orientation.has_value() || sample.angular_velocity.has_value() ||
@@ -683,12 +725,14 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
   std::deque<std::chrono::steady_clock::time_point> sample_times;
   double timeout = 0.0;
   double loop_period = 0.0;
+  bool standby = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_sample = last_sample_;
     sample_times = sample_times_;
     timeout = timeout_;
     loop_period = last_watchdog_period_;
+    standby = standby_;
   }
 
   const bool have_age = last_sample.has_value();
@@ -713,6 +757,8 @@ void ImuNode::diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & s
   // The watchdog's own measured tick period - a leading indicator of executor stalls, since
   // it moves at control_freq while the rest of this task only resolves at the 1 Hz Updater rate.
   stat.add("loop_period_s", two_decimals(loop_period));
+  // Samples still flow from the driver in standby; the data topics are just held silent.
+  stat.add("standby", standby ? "true" : "false");
 }
 
 void ImuNode::diagnose_calibration(diagnostic_updater::DiagnosticStatusWrapper & stat)

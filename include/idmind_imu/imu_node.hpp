@@ -40,6 +40,7 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/magnetic_field.hpp"
 #include "sensor_msgs/msg/temperature.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 namespace idmind_imu
@@ -78,6 +79,9 @@ public:
   /// Number of watchdog ticks observed so far, for tests: proves the watchdog is still
   /// running without depending on a topic or the independently-timed diagnostics Updater.
   size_t watchdog_tick_count() const;
+
+  /// Whether the node is currently in standby (data-topic publishing suppressed), for tests.
+  bool standby() const;
 
 private:
   /// The node-side parameters one publish pass needs, snapshotted together under the lock.
@@ -125,6 +129,13 @@ private:
   void report_ready(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+
+  /// Enter or leave standby. In standby the node keeps receiving samples from the driver - so
+  /// diagnostics, the watchdog and the noise estimate stay live - but publishes nothing on its
+  /// data topics. ``request->data`` true enters standby, false resumes publishing.
+  void set_standby(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
   /// Validate and apply changed parameters, forwarding the hardware-relevant subset.
   rcl_interfaces::msg::SetParametersResult update_parameters(
@@ -202,6 +213,10 @@ private:
 
   bool ready_{false};
 
+  /// When true, ``on_sample`` still runs all its bookkeeping but publishes nothing. Written by
+  /// the ``standby`` service on an executor thread, read by ``on_sample`` on a driver thread.
+  bool standby_{false};
+
   /// Guards the duplicate-suppression state of ``log``, which is called from several threads
   /// and must never depend on mutex_ (a caller may already hold it).
   mutable std::mutex log_mutex_;
@@ -211,6 +226,7 @@ private:
   // -- ROS entities --------------------------------------------------------------------------
 
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr ready_service_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr standby_service_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Temperature>::SharedPtr temp_pub_;
   rclcpp::Publisher<sensor_msgs::msg::MagneticField>::SharedPtr mag_pub_;
