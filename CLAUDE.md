@@ -41,8 +41,9 @@ deliberately for now; do not "helpfully" delete it or sync it with v2.
 
 ### Runtime interface
 
-The launch file names the node `idmind_imu`, and topic names are built from
-`self.get_name() + "/"`, so the real topics are `/idmind_imu/*`.
+The launch file names the node `idmind_imu` and namespaces it under the `robot_name` launch
+argument (default empty). Topic names are built from `self.get_name() + "/"`, so the real
+topics are `/idmind_imu/*`, or `/<robot_name>/idmind_imu/*` when `robot_name` is set.
 
 **The README documents them as `imu_brick_node/*` and is wrong** — along with describing
 `euler` as degrees when it publishes radians, and omitting the `gravity` and `calibration`
@@ -52,7 +53,9 @@ publishers and the `auto_reconnect` parameter. Trust the source, not `README.MD`
   (`std_msgs/Float32`, yaw in **radians**), `gravity` (`geometry_msgs/Vector3Stamped`),
   `calibration` (`std_msgs/UInt8MultiArray`, `[sys, gyro, acc, mag]` each 0–3), `timer`,
   and `/diagnostics`.
-- Service: `ready` (`std_srvs/Trigger`).
+- Services: `ready` (`std_srvs/Trigger`); `standby` (`std_srvs/SetBool`) — `data: true`
+  suspends publishing on the data topics (samples are still received, `publish_imu` just
+  returns early after refreshing `last_imu_msg`), `data: false` resumes.
 - Parameters: `control_freq`, `imu_freq`, `imu_frame`, `imu_leds`, `imu_fusion_mode`,
   `timeout`, `auto_reconnect` — all dynamically reconfigurable via `update_parameters`.
   `config/idmind_imu.yaml` overrides `imu_frame` to `"imu2"` (code default is `"imu"`).
