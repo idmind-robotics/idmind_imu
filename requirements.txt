@@ -1,0 +1,7 @@
+# Python dependencies that are not available through rosdep.
+# Install alongside the rosdep dependencies:
+#   pip install -r requirements.txt
+#
+# tinkerforge: official bindings for the IMU Brick 2.0. Not packaged for apt or rosdep;
+# upstream ships it only on PyPI (https://www.tinkerforge.com/en/doc/Software/API_Bindings_Python.html).
+tinkerforge>=2.1.34

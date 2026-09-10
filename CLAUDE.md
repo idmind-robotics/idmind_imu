@@ -32,8 +32,9 @@ colcon test --packages-select idmind_imu && colcon test-result --verbose
 ## idmind_imu
 
 Driver for the TinkerForge IMU Brick 2.0 (BNO-055), reached over BrickDaemon TCP at
-`localhost:4223`. Requires `brickd` running plus the `tinkerforge` Python bindings; neither is
-declared in `package.xml`, so `rosdep` will not install them.
+`localhost:4223`. Requires `brickd` running plus the `tinkerforge` Python bindings. `brickd`
+is external; `tinkerforge` is not in rosdep, so it is declared in `requirements.txt`
+(`pip install -r requirements.txt`) rather than `package.xml`.
 
 Two nodes ship as console scripts. **`imu_brick_node_v2` is the live one** — it is what the
 launch file starts. `imu_brick_node` is the legacy version, unused by any launch file, kept
@@ -45,9 +46,8 @@ The launch file names the node `idmind_imu` and namespaces it under the `robot_n
 argument (default empty). Topic names are built from `self.get_name() + "/"`, so the real
 topics are `/idmind_imu/*`, or `/<robot_name>/idmind_imu/*` when `robot_name` is set.
 
-**The README documents them as `imu_brick_node/*` and is wrong** — along with describing
-`euler` as degrees when it publishes radians, and omitting the `gravity` and `calibration`
-publishers and the `auto_reconnect` parameter. Trust the source, not `README.MD`.
+`README.MD` was rewritten to match the source (v2, namespaced, full topic/service/parameter
+tables). If in doubt, still trust the source.
 
 - Publishers: `imu` (`sensor_msgs/Imu`), `temperature`, `magnetic_field`, `euler`
   (`std_msgs/Float32`, yaw in **radians**), `gravity` (`geometry_msgs/Vector3Stamped`),
@@ -107,5 +107,6 @@ Full write-up with line references: `~/.claude/plans/quiet-launching-nygaard.md`
   `.get_parameter_value().<type>_value`.
 - Tests are ament lint boilerplate only (`test_flake8`, `test_pep257`, `test_copyright`) —
   there is no functional test suite to lean on. Verify changes against real hardware or by
-  running the node and inspecting topics.
+  running the node and inspecting topics. `test_flake8` / `test_pep257` exclude the frozen
+  `imu_brick_node.py`; keep `imu_brick_node_v2.py` and everything else lint-clean.
 - Do **not** run `graphify` on this workspace.

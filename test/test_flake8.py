@@ -16,10 +16,15 @@ from ament_flake8.main import main_with_errors
 import pytest
 
 
+# imu_brick_node.py is the frozen legacy node (see CLAUDE.md): kept for reference, started
+# by no launch file, and deliberately not restyled. New code is held to the linters.
+_EXCLUDE = ['idmind_imu/imu_brick_node.py']
+
+
 @pytest.mark.flake8
 @pytest.mark.linter
 def test_flake8():
-    rc, errors = main_with_errors(argv=[])
+    rc, errors = main_with_errors(argv=['--exclude', *_EXCLUDE])
     assert rc == 0, \
         'Found %d code style errors / warnings:\n' % len(errors) + \
         '\n'.join(errors)
