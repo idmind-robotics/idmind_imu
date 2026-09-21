@@ -58,3 +58,4 @@ Responsibilities:
 | Name | Type | Description |
 |------|------|-------------|
 | `imu_brick_node/ready` | `std_srvs/srv/Trigger` | Returns whether the node is ready |
+| `imu_brick_node/standby` | `std_srvs/srv/SetBool` | `data: true` suspends publishing on the data topics; `data: false` resumes. Samples keep arriving from the device while suspended, so the connection watchdog stays quiet. |
