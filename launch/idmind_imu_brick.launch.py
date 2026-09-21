@@ -8,19 +8,24 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     ld = LaunchDescription()
-    
+
+    # Robot name, used for namespacing
+    robot_name = DeclareLaunchArgument(name='robot_name', default_value='', description='Name of this robot, used for namespacing')
+    ld.add_action(robot_name)
+
     def_imu_cfg = os.path.join(get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml')
-    imu_cfg = DeclareLaunchArgument(name="imu_cfg", default_value=def_imu_cfg, description="Configuration file for IMU")
+    imu_cfg = DeclareLaunchArgument(name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU')
     ld.add_action(imu_cfg)
-    
+
     imu_node = Node(
         package='idmind_imu',
         executable='imu_brick_node_v2',
         name='idmind_imu',
+        namespace=LaunchConfiguration('robot_name'),
         output='screen',
         emulate_tty=True,
-        parameters = [LaunchConfiguration('imu_cfg')],
-        remappings = [],
+        parameters=[LaunchConfiguration('imu_cfg')],
+        remappings=[],
     )
     ld.add_action(imu_node)
 
