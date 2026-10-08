@@ -26,6 +26,7 @@
 #include <array>
 #include <chrono>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -35,6 +36,7 @@
 #include "diagnostic_updater/diagnostic_updater.hpp"
 #include "geometry_msgs/msg/vector3_stamped.hpp"
 #include "idmind_imu/drivers/driver.hpp"
+#include "idmind_imu/health.hpp"
 #include "idmind_imu/noise_estimator.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
@@ -53,8 +55,31 @@ extern const std::vector<double> kDefaultAngularVelocityStddev;
 extern const std::vector<double> kDefaultLinearAccelerationStddev;
 /// Default magnetic-field stddev per axis, tesla: the old 0.6 uT.
 extern const std::vector<double> kDefaultMagneticFieldStddev;
-/// Number of recent sample timestamps kept to estimate the observed data rate.
+/// Most recent sample timestamps kept to estimate the observed data rate.
 constexpr size_t kRateWindow = 50;
+/// Only samples this recent (seconds) count towards the rate, so a past gap ages out.
+constexpr double kRateSpan = 2.0;
+/// How long (seconds) the rate must stay low before IMU_RATE_LOW raises, and stay back at
+/// rate before it clears.
+constexpr double kRateDebounce = 3.0;
+/// How long (seconds) IMU_DATA_INVALID stays raised after the last invalid sample.
+constexpr double kInvalidHold = 1.0;
+
+/// The node's coarse state, reported as the ``state`` key of the Connection diagnostic.
+enum class NodeState
+{
+  /// Transport (e.g. BrickDaemon) not connected.
+  DISCONNECTED,
+  /// Connected, but no IMU found on it.
+  NO_DEVICE,
+  /// Device present and no recovery in progress.
+  RUNNING,
+  /// Connected but silent or frozen; the recovery ladder is running.
+  RECOVERING,
+};
+
+/// "DISCONNECTED", "NO_DEVICE", "RUNNING" or "RECOVERING".
+const char * node_state_name(NodeState state);
 
 /// ROS 2 node that streams samples from an ``ImuDriver`` onto a fixed set of topics.
 ///
@@ -106,6 +131,45 @@ private:
     std::optional<std::array<double, 3>> measured_orientation;
   };
 
+  /// The value of every field the frozen-data check compares. A frame counts as frozen only
+  /// when all of them repeat: a still robot can legitimately repeat any single one.
+  struct Reading
+  {
+    std::optional<std::array<double, 4>> orientation;
+    std::optional<std::array<double, 3>> angular_velocity;
+    std::optional<std::array<double, 3>> linear_acceleration;
+    std::optional<std::array<double, 3>> raw_acceleration;
+    std::optional<std::array<double, 3>> magnetic_field;
+
+    bool operator==(const Reading & other) const;
+  };
+
+  /// Declare one parameter. An invalid startup value falls back to \p default_value, is
+  /// written back so ``ros2 param get`` tells the truth, and raises IMU_PARAM_FALLBACK.
+  template<typename T>
+  T declare(const std::string & name, const T & default_value, const std::string & description);
+
+  /// Why \p sample must be dropped, or nothing if it is valid. Caller must hold ``mutex_``.
+  std::optional<std::string> invalid_reason_locked(const ImuSample & sample) const;
+
+  /// Raise and clear every condition from the current state, and run the recovery policy.
+  /// Returns the recovery action to take, if any. Caller must hold ``mutex_``.
+  std::optional<RecoveryAction> evaluate_health_locked(const DriverState & state, double now);
+
+  /// The first active condition of \p scope as (level, message), or (OK, \p ok_message).
+  void summarize_locked(
+    diagnostic_updater::DiagnosticStatusWrapper & stat, const std::string & scope,
+    const std::string & ok_message) const;
+
+  /// Raise or clear IMU_PARAM_FALLBACK from ``param_fallbacks_``. Caller must hold ``mutex_``.
+  void refresh_param_fallback_locked();
+
+  /// Observed sample rate over the recent samples. Caller must hold ``mutex_``.
+  double rate_locked(double now) const;
+
+  /// Seconds on the steady clock, the time base of all health bookkeeping.
+  static double now_seconds();
+
   /// Copy the current publish parameters and noise estimates. Caller must hold ``mutex_``.
   PublishParams publish_params_locked() const;
 
@@ -125,7 +189,8 @@ private:
   /// Build the hardware-relevant config subset from the current parameter values.
   DriverConfig driver_config() const;
 
-  /// Reply with whether the node has finished initializing.
+  /// Reply with whether the IMU is RUNNING with fresh data; the message carries the state
+  /// and whatever is blocking readiness.
   void report_ready(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
@@ -167,8 +232,8 @@ private:
   void diagnose_data_flow(diagnostic_updater::DiagnosticStatusWrapper & stat);
   void diagnose_calibration(diagnostic_updater::DiagnosticStatusWrapper & stat);
 
-  /// Log \p message, suppressing an identical message repeated within one second.
-  void log(const std::string & message, const std::string & alert = "info");
+  /// Sink for ConditionTracker: WARN and ERROR at their level, clears (OK) at INFO.
+  void log_condition(health::Level level, const std::string & message);
 
   // -- Parameters ---------------------------------------------------------------------------
 
@@ -192,36 +257,56 @@ private:
   bool noise_estimate_when_still_{true};
   double stationary_gyro_threshold_{0.02};
   double stationary_accel_threshold_{0.2};
+  double rate_warn_ratio_{0.8};
+  double frozen_timeout_{5.0};
+  double quaternion_norm_tolerance_{0.05};
+  double max_acceleration_{156.9};
+  double calibration_grace_period_{60.0};
 
   // -- Shared state, guarded by mutex_ (touched by a driver thread and an executor thread) --
 
   mutable std::mutex mutex_;
-  std::optional<std::chrono::steady_clock::time_point> last_sample_;
+  /// Steady-clock seconds at construction: data age is measured from here until a sample.
+  double start_time_{0.0};
+  std::optional<double> first_sample_;
+  std::optional<double> last_sample_;
   std::optional<conversions::Calibration> last_calibration_;
-  std::deque<std::chrono::steady_clock::time_point> sample_times_;
+  int last_fusion_mode_{0};
+  std::deque<double> sample_times_;
+  /// Frozen-data check: the last valid reading and when it last changed.
+  std::optional<Reading> last_reading_;
+  double last_change_{0.0};
+  /// Invalid-data check: when the last invalid sample arrived, and why it was dropped.
+  std::optional<double> last_invalid_;
+  std::string invalid_reason_;
+
+  /// Health. All of it is touched only under mutex_.
+  health::ConditionTracker tracker_;
+  health::RecoveryPolicy policy_;
+  health::Debounce connect_debounce_{1.0, 0.0};
+  health::Debounce device_debounce_{1.0, 0.0};
+  health::Debounce rate_debounce_{kRateDebounce, kRateDebounce};
+  NodeState node_state_{NodeState::DISCONNECTED};
+  /// Parameters whose startup value was invalid, with the reason; cleared by a valid set.
+  std::map<std::string, std::string> param_fallbacks_;
 
   /// Sliding-window noise estimators, all touched only under mutex_.
   RollingVariance angular_velocity_noise_{100};
   RollingVariance linear_acceleration_noise_{100};
   RollingVariance magnetic_field_noise_{100};
   RollingVariance orientation_noise_{100, AngleWrap::Radians};
-  std::chrono::steady_clock::time_point last_watchdog_{std::chrono::steady_clock::now()};
+  double last_watchdog_{0.0};
   /// The watchdog's last measured tick period, surfaced as the "loop_period_s" diagnostic key.
   double last_watchdog_period_{0.0};
   /// Ticks observed so far; read by watchdog_tick_count() for tests.
   size_t watchdog_tick_count_{0};
 
-  bool ready_{false};
+  /// Whether the last sample is younger than ``timeout``, as of the last watchdog tick.
+  bool data_fresh_{false};
 
   /// When true, ``on_sample`` still runs all its bookkeeping but publishes nothing. Written by
   /// the ``standby`` service on an executor thread, read by ``on_sample`` on a driver thread.
   bool standby_{false};
-
-  /// Guards the duplicate-suppression state of ``log``, which is called from several threads
-  /// and must never depend on mutex_ (a caller may already hold it).
-  mutable std::mutex log_mutex_;
-  std::string last_message_;
-  std::chrono::steady_clock::time_point last_message_time_{std::chrono::steady_clock::now()};
 
   // -- ROS entities --------------------------------------------------------------------------
 

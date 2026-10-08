@@ -72,6 +72,9 @@ public:
   /// Return an immutable snapshot of the current connection and device status.
   DriverState state() const override;
 
+  /// Enqueue a recovery job on the worker thread; returns immediately.
+  void recover(RecoveryAction action) override;
+
 private:
   /// Owns an ``IMUV2`` and calls ``imu_v2_destroy`` exactly once when the last user drops it.
   ///
@@ -119,6 +122,7 @@ private:
   // -- Connection lifecycle -----------------------------------------------------------------
 
   /// Retry ``ipcon_connect`` roughly once a second until it succeeds or stop is requested.
+  /// Re-reads host and port on every try, so a corrected parameter takes effect.
   void connect_loop();
   /// Handle a transport connect: mark connected, then trigger enumeration.
   void on_connected(uint8_t connect_reason);
@@ -141,12 +145,22 @@ private:
   void enqueue(Job job);
   /// Read the device's current config and issue only the setters actually needed.
   void do_apply_config();
+  /// Recovery step 1: re-enumerate, and re-send the data period even if it looks right.
+  void do_rearm();
+  /// Recovery step 2: drop the BrickDaemon connection and open it again.
+  void do_reconnect();
   /// Converge the two independent LED booleans onto the single ``imu_leds`` setting.
-  void apply_leds(IMUV2 * imu, const DriverConfig & config);
+  /// These return false and fill \p error when a hardware call fails.
+  bool apply_leds(IMUV2 * imu, const DriverConfig & config, std::string & error);
   /// Set the sensor fusion mode if it differs from the desired one.
-  void apply_fusion_mode(IMUV2 * imu, const DriverConfig & config);
-  /// Set the all-data callback period from ``imu_freq`` if it differs from the current.
-  void apply_data_period(IMUV2 * imu, const DriverConfig & config);
+  bool apply_fusion_mode(IMUV2 * imu, const DriverConfig & config, std::string & error);
+  /// Set the all-data callback period from ``imu_freq`` if it differs from the current, or
+  /// unconditionally with \p force: a device that silently stopped streaming still reports
+  /// the period it was given.
+  bool apply_data_period(
+    IMUV2 * imu, const DriverConfig & config, std::string & error, bool force = false);
+  /// Record \p error as the last error, and log it at DEBUG.
+  void record_error(const std::string & error);
 
   IPConnection ipcon_{};
   /// Whether ``ipcon_create`` has run, so the destructor knows to call ``ipcon_destroy``.

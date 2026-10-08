@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 
 #include "fake_brickd.hpp"
@@ -305,6 +306,106 @@ TEST_F(BrickV2DriverTest, ApplyConfigReconvergesTheDevice)
   driver->stop();
 }
 
+TEST_F(BrickV2DriverTest, RawAccelerationIsReportedWhateverTheSource)
+{
+  // The node's saturation and frozen-data checks need the unfused accelerometer even when
+  // linear_acceleration carries the fused field.
+  auto driver = make_driver();
+  driver->start();
+  ASSERT_TRUE(wait_until([&] {return driver->state().device_present;}, kStartDeadline))
+    << "device never found";
+
+  AllData data;
+  data.acceleration = {500, 0, 981};
+  data.linear_acceleration = {100, 0, 0};
+  fake_.push_all_data(data);
+
+  const auto sample = samples_.pop(kSampleDeadline);
+  ASSERT_TRUE(sample.has_value());
+  ASSERT_TRUE(sample->raw_acceleration.has_value());
+  EXPECT_NEAR((*sample->raw_acceleration)[0], 5.0, 1e-9);
+  EXPECT_NEAR((*sample->raw_acceleration)[2], 9.81, 1e-9);
+  EXPECT_NEAR((*sample->linear_acceleration)[0], 1.0, 1e-9);
+
+  driver->stop();
+}
+
+TEST_F(BrickV2DriverTest, RearmResendsTheDataPeriodEvenWhenUnchanged)
+{
+  // A brick that stopped streaming still reports the period it was given, so the ordinary
+  // change-only convergence would never re-send it. Recovery must.
+  auto driver = make_driver();
+  driver->start();
+  ASSERT_TRUE(wait_until([&] {return fake_.all_data_period() == 50;}, kSettleDeadline))
+    << "initial config never applied";
+  const size_t sets = fake_.request_count(idmind_imu::testing::kFunctionSetAllDataPeriod);
+  const size_t enumerates = fake_.request_count(idmind_imu::testing::kFunctionEnumerate);
+
+  driver->recover(idmind_imu::RecoveryAction::Rearm);
+
+  EXPECT_TRUE(
+    wait_until(
+      [&] {
+        return fake_.request_count(idmind_imu::testing::kFunctionSetAllDataPeriod) > sets &&
+        fake_.request_count(idmind_imu::testing::kFunctionEnumerate) > enumerates;
+      },
+      kSettleDeadline)) << "rearm did not re-enumerate and re-send the period";
+  EXPECT_EQ(fake_.connection_count(), 1u) << "rearm must keep the connection";
+  EXPECT_EQ(fake_.all_data_period(), 50u);
+
+  driver->stop();
+}
+
+TEST_F(BrickV2DriverTest, ReconnectOpensANewConnectionAndFindsTheDeviceAgain)
+{
+  auto driver = make_driver();
+  driver->start();
+  ASSERT_TRUE(wait_until([&] {return driver->state().device_present;}, kStartDeadline))
+    << "device never found";
+  ASSERT_EQ(fake_.connection_count(), 1u);
+
+  driver->recover(idmind_imu::RecoveryAction::Reconnect);
+
+  ASSERT_TRUE(wait_until([&] {return fake_.connection_count() == 2;}, kSettleDeadline))
+    << "reconnect never opened a new connection";
+  ASSERT_TRUE(wait_until([&] {return driver->state().device_present;}, kStartDeadline))
+    << "device not found again after reconnecting";
+
+  fake_.push_all_data(AllData{});
+  EXPECT_TRUE(samples_.pop(kSampleDeadline).has_value()) << "no data after reconnecting";
+
+  driver->stop();
+}
+
+TEST_F(BrickV2DriverTest, ConfigFailureIsReportedInStateAndClearsOnSuccess)
+{
+  // An unanswered getter times out inside the bindings (about 2.5 s); the driver reports it
+  // through state() for the node to raise, rather than logging it itself.
+  fake_.set_answer_get_all_data_period(false);
+  auto driver = make_driver();
+  driver->start();
+
+  ASSERT_TRUE(
+    wait_until([&] {return driver->state().config_failed;}, std::chrono::seconds(10)))
+    << "config failure never reported";
+  EXPECT_NE(driver->state().last_error.find("get_all_data_period"), std::string::npos)
+    << driver->state().last_error;
+
+  fake_.set_answer_get_all_data_period(true);
+  DriverConfig changed;
+  changed.host = "127.0.0.1";
+  changed.port = fake_.port();
+  changed.imu_freq = 10.0;
+  driver->apply_config(changed);
+
+  EXPECT_TRUE(
+    wait_until([&] {return !driver->state().config_failed;}, std::chrono::seconds(10)))
+    << "config failure never cleared";
+  EXPECT_EQ(fake_.all_data_period(), 100u);
+
+  driver->stop();
+}
+
 TEST_F(BrickV2DriverTest, StopIsCleanAndIdempotent)
 {
   auto driver = make_driver();
@@ -343,8 +444,10 @@ TEST(BrickV2DriverNoServer, StartWithoutAServerDoesNotBlockOrCrash)
   driver.start();
   EXPECT_LT(std::chrono::steady_clock::now() - started_at, std::chrono::seconds(1));
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  ASSERT_TRUE(wait_until([&] {return !driver.state().last_error.empty();}, kStartDeadline))
+    << "connect failure never reported";
   EXPECT_FALSE(driver.state().connected);
+  EXPECT_NE(driver.state().last_error.find("127.0.0.1:1"), std::string::npos);
 
   driver.stop();
 }

@@ -181,6 +181,24 @@ DriverState ImuBrickV2Driver::state() const
   return state_;
 }
 
+void ImuBrickV2Driver::recover(RecoveryAction action)
+{
+  if (action == RecoveryAction::Rearm) {
+    enqueue([this]() {do_rearm();});
+  } else {
+    enqueue([this]() {do_reconnect();});
+  }
+}
+
+void ImuBrickV2Driver::record_error(const std::string & error)
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    state_.last_error = error;
+  }
+  RCLCPP_DEBUG(logger_, "IMU brick: %s", error.c_str());
+}
+
 // -- C callback trampolines -------------------------------------------------------------------
 
 void ImuBrickV2Driver::connected_trampoline(uint8_t connect_reason, void * user_data)
@@ -221,14 +239,6 @@ void ImuBrickV2Driver::all_data_trampoline(
 
 void ImuBrickV2Driver::connect_loop()
 {
-  std::string host;
-  int port = 0;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    host = config_.host;
-    port = config_.port;
-  }
-
   while (true) {
     {
       std::unique_lock<std::mutex> lock(job_mutex_);
@@ -237,13 +247,22 @@ void ImuBrickV2Driver::connect_loop()
       }
     }
 
+    std::string host;
+    int port = 0;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      host = config_.host;
+      port = config_.port;
+    }
+
     const int result = ipcon_connect(&ipcon_, host.c_str(), static_cast<uint16_t>(port));
     if (result == E_OK || result == E_ALREADY_CONNECTED) {
       return;
     }
 
-    RCLCPP_WARN(
-      logger_, "IMU brick: connect to %s:%d failed (error %d)", host.c_str(), port, result);
+    record_error(
+      "connect to " + host + ":" + std::to_string(port) + " failed (error " +
+      std::to_string(result) + ")");
 
     // Wait out the retry interval, but wake immediately if stop() fires meanwhile.
     std::unique_lock<std::mutex> lock(job_mutex_);
@@ -261,13 +280,13 @@ void ImuBrickV2Driver::on_connected(uint8_t connect_reason)
     state_.connected = true;
     state_.detail = "connected, enumerating";
   }
-  RCLCPP_INFO(
+  RCLCPP_DEBUG(
     logger_, "IMU brick: connected to BrickDaemon (reason=%u)",
     static_cast<unsigned>(connect_reason));
 
   const int result = ipcon_enumerate(&ipcon_);
   if (result != E_OK) {
-    RCLCPP_ERROR(logger_, "IMU brick: enumerate failed (error %d)", result);
+    record_error("enumerate failed (error " + std::to_string(result) + ")");
   }
 }
 
@@ -284,7 +303,7 @@ void ImuBrickV2Driver::on_disconnected(uint8_t disconnect_reason)
     dropped = std::move(device_);
     device_.reset();
   }
-  RCLCPP_WARN(
+  RCLCPP_DEBUG(
     logger_, "IMU brick: disconnected from BrickDaemon (reason=%u)",
     static_cast<unsigned>(disconnect_reason));
 }
@@ -327,7 +346,7 @@ void ImuBrickV2Driver::on_enumerate(
     state_.detail = "device enumerated";
   }
 
-  RCLCPP_INFO(logger_, "IMU brick: found device %s", uid);
+  RCLCPP_DEBUG(logger_, "IMU brick: found device %s", uid);
   enqueue([this]() {do_apply_config();});
 }
 
@@ -355,6 +374,7 @@ void ImuBrickV2Driver::on_all_data(
       conversions::acceleration_from_brick(to_array<3>(linear_acceleration));
 
     ImuSample sample;
+    sample.raw_acceleration = conversions::acceleration_from_brick(to_array<3>(acceleration));
     sample.orientation = conversions::quaternion_from_brick(to_array<4>(quaternion));
     sample.angular_velocity =
       conversions::angular_velocity_from_brick(to_array<3>(angular_velocity));
@@ -407,7 +427,7 @@ void ImuBrickV2Driver::worker_loop()
     try {
       job();
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(logger_, "IMU brick: config job failed: %s", exc.what());
+      record_error(std::string("worker job failed: ") + exc.what());
     }
   }
 }
@@ -429,64 +449,138 @@ void ImuBrickV2Driver::do_apply_config()
     return;
   }
 
-  apply_leds(device->handle(), config);
-  apply_fusion_mode(device->handle(), config);
-  apply_data_period(device->handle(), config);
+  // Every step runs even if an earlier one failed: they are independent settings.
+  std::string error;
+  bool ok = apply_leds(device->handle(), config, error);
+  ok = apply_fusion_mode(device->handle(), config, error) && ok;
+  ok = apply_data_period(device->handle(), config, error) && ok;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    state_.config_failed = !ok;
+  }
+  if (!ok) {
+    record_error(error);
+  }
 }
 
-void ImuBrickV2Driver::apply_leds(IMUV2 * imu, const DriverConfig & config)
+void ImuBrickV2Driver::do_rearm()
+{
+  // Enumerate is a fire-and-forget request; a device that answers is wired up again by
+  // on_enumerate, which also queues a full config convergence.
+  const int result = ipcon_enumerate(&ipcon_);
+  if (result != E_OK) {
+    record_error("recovery enumerate failed (error " + std::to_string(result) + ")");
+  }
+
+  std::shared_ptr<Device> device;
+  DriverConfig config;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    device = device_;
+    config = config_;
+  }
+  if (!device) {
+    return;
+  }
+  std::string error;
+  if (!apply_data_period(device->handle(), config, error, true)) {
+    record_error(error);
+  }
+}
+
+void ImuBrickV2Driver::do_reconnect()
+{
+  std::string host;
+  int port = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    host = config_.host;
+    port = config_.port;
+  }
+
+  // Joins the library's callback thread, which is why this never runs on it. The disconnect
+  // callback drops the device; the connect callback enumerates and re-applies the config.
+  ipcon_disconnect(&ipcon_);
+
+  {
+    std::lock_guard<std::mutex> lock(job_mutex_);
+    if (stopping_) {
+      return;
+    }
+  }
+  // stop() disconnects again after joining this thread, so a connect that lands here while
+  // stopping is still torn down.
+  const int result = ipcon_connect(&ipcon_, host.c_str(), static_cast<uint16_t>(port));
+  if (result != E_OK && result != E_ALREADY_CONNECTED) {
+    record_error(
+      "reconnect to " + host + ":" + std::to_string(port) + " failed (error " +
+      std::to_string(result) + ")");
+  }
+}
+
+bool ImuBrickV2Driver::apply_leds(IMUV2 * imu, const DriverConfig & config, std::string & error)
 {
   // are_leds_on (the orientation/direction LEDs) and is_status_led_enabled are independent on
   // the hardware, so they are read and driven separately. Combining them cannot converge.
   const bool desired = config.imu_leds;
 
+  bool ok = true;
   bool leds_on = false;
   int result = imu_v2_are_leds_on(imu, &leds_on);
   if (result != E_OK) {
-    RCLCPP_ERROR(logger_, "IMU brick: are_leds_on failed (error %d)", result);
+    error = "are_leds_on failed (error " + std::to_string(result) + ")";
+    ok = false;
   } else if (leds_on != desired) {
     result = desired ? imu_v2_leds_on(imu) : imu_v2_leds_off(imu);
     if (result != E_OK) {
-      RCLCPP_ERROR(logger_, "IMU brick: setting LEDs failed (error %d)", result);
+      error = "setting LEDs failed (error " + std::to_string(result) + ")";
+      ok = false;
     }
   }
 
   bool status_led = false;
   result = imu_v2_is_status_led_enabled(imu, &status_led);
   if (result != E_OK) {
-    RCLCPP_ERROR(logger_, "IMU brick: is_status_led_enabled failed (error %d)", result);
+    error = "is_status_led_enabled failed (error " + std::to_string(result) + ")";
+    ok = false;
   } else if (status_led != desired) {
     result = desired ? imu_v2_enable_status_led(imu) : imu_v2_disable_status_led(imu);
     if (result != E_OK) {
-      RCLCPP_ERROR(logger_, "IMU brick: setting the status LED failed (error %d)", result);
+      error = "setting the status LED failed (error " + std::to_string(result) + ")";
+      ok = false;
     }
   }
+  return ok;
 }
 
-void ImuBrickV2Driver::apply_fusion_mode(IMUV2 * imu, const DriverConfig & config)
+bool ImuBrickV2Driver::apply_fusion_mode(
+  IMUV2 * imu, const DriverConfig & config, std::string & error)
 {
   const uint8_t desired = static_cast<uint8_t>(config.imu_fusion_mode);
 
   uint8_t current = 0;
   int result = imu_v2_get_sensor_fusion_mode(imu, &current);
   if (result != E_OK) {
-    RCLCPP_ERROR(logger_, "IMU brick: get_sensor_fusion_mode failed (error %d)", result);
-    return;
+    error = "get_sensor_fusion_mode failed (error " + std::to_string(result) + ")";
+    return false;
   }
   if (current != desired) {
     result = imu_v2_set_sensor_fusion_mode(imu, desired);
     if (result != E_OK) {
-      RCLCPP_ERROR(logger_, "IMU brick: set_sensor_fusion_mode failed (error %d)", result);
+      error = "set_sensor_fusion_mode failed (error " + std::to_string(result) + ")";
+      return false;
     }
   }
+  return true;
 }
 
-void ImuBrickV2Driver::apply_data_period(IMUV2 * imu, const DriverConfig & config)
+bool ImuBrickV2Driver::apply_data_period(
+  IMUV2 * imu, const DriverConfig & config, std::string & error, bool force)
 {
   if (config.imu_freq <= 0.0) {
-    RCLCPP_WARN(
-      logger_, "IMU brick: invalid imu_freq %f, skipping data period update", config.imu_freq);
-    return;
+    error = "invalid imu_freq " + std::to_string(config.imu_freq) + ", data period not set";
+    return false;
   }
   // A period of 0 tells the device to disable the callback entirely, so any imu_freq above
   // 1000 Hz - which truncates to 0 here - must be clamped rather than silently killing the
@@ -494,24 +588,26 @@ void ImuBrickV2Driver::apply_data_period(IMUV2 * imu, const DriverConfig & confi
   const double raw_period = 1000.0 / config.imu_freq;
   uint32_t desired = static_cast<uint32_t>(raw_period);
   if (desired < 1) {
-    RCLCPP_WARN(
-      logger_, "IMU brick: imu_freq %f would disable the data callback, clamping period to 1ms",
-      config.imu_freq);
     desired = 1;
   }
 
-  uint32_t current = 0;
-  int result = imu_v2_get_all_data_period(imu, &current);
-  if (result != E_OK) {
-    RCLCPP_ERROR(logger_, "IMU brick: get_all_data_period failed (error %d)", result);
-    return;
-  }
-  if (current != desired) {
-    result = imu_v2_set_all_data_period(imu, desired);
+  if (!force) {
+    uint32_t current = 0;
+    const int result = imu_v2_get_all_data_period(imu, &current);
     if (result != E_OK) {
-      RCLCPP_ERROR(logger_, "IMU brick: set_all_data_period failed (error %d)", result);
+      error = "get_all_data_period failed (error " + std::to_string(result) + ")";
+      return false;
+    }
+    if (current == desired) {
+      return true;
     }
   }
+  const int result = imu_v2_set_all_data_period(imu, desired);
+  if (result != E_OK) {
+    error = "set_all_data_period failed (error " + std::to_string(result) + ")";
+    return false;
+  }
+  return true;
 }
 
 }  // namespace idmind_imu

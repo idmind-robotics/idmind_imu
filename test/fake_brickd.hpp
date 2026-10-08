@@ -84,6 +84,19 @@ struct AllData
   uint8_t calibration_status{0};
 };
 
+/// Fault the fake can inject into its all-data stream, to exercise recovery.
+enum class Silence
+{
+  /// Frames are delivered normally.
+  None,
+  /// Frames are dropped until the client re-sends the all-data period (recovery step 1).
+  UntilRearm,
+  /// Frames are dropped until the client reconnects (recovery step 2).
+  UntilReconnect,
+  /// Frames are dropped until the test calls ``set_silence(Silence::None)``.
+  Forever,
+};
+
 /// A minimal fake BrickDaemon that speaks just enough protocol to fool the real bindings.
 ///
 /// Binds to an ephemeral port on 127.0.0.1 (read back via ``port()``) so tests never collide
@@ -146,6 +159,26 @@ public:
   /// Whether the fake currently reports its status LED as enabled.
   bool status_led_enabled() const;
 
+  // -- Fault injection ----------------------------------------------------------------------
+
+  /// Silence the all-data stream: ``push_all_data`` then drops frames while connected, which
+  /// is what a brick whose sensor stopped streaming looks like.
+  void set_silence(Silence silence);
+
+  /// Whether enumerate requests are answered. When not, the client connects but never finds
+  /// a device.
+  void set_answer_enumerate(bool answer);
+
+  /// Whether ``get_all_data_period`` is answered. When not, that getter times out in the
+  /// bindings, which is a config failure the driver must report.
+  void set_answer_get_all_data_period(bool answer);
+
+  /// How many client connections have been accepted so far.
+  size_t connection_count() const;
+
+  /// How many requests with \p function_id have been received so far.
+  size_t request_count(uint8_t function_id) const;
+
 private:
   /// Accept one client connection at a time and service it until it disconnects.
   void accept_loop();
@@ -175,6 +208,10 @@ private:
   bool leds_on_{false};
   bool status_led_enabled_{true};
   std::vector<uint8_t> requests_;
+  Silence silence_{Silence::None};
+  bool answer_enumerate_{true};
+  bool answer_get_all_data_period_{true};
+  size_t connection_count_{0};
 
   int server_fd_{-1};
   mutable std::mutex client_mutex_;

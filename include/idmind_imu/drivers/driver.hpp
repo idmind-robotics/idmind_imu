@@ -48,8 +48,12 @@ struct ImuSample
   std::optional<std::array<double, 4>> orientation;
   /// Angular velocity (x, y, z) in rad/s.
   std::optional<std::array<double, 3>> angular_velocity;
-  /// Linear acceleration (x, y, z) in m/s^2.
+  /// Linear acceleration (x, y, z) in m/s^2, from the source the config selects.
   std::optional<std::array<double, 3>> linear_acceleration;
+  /// Raw accelerometer reading (x, y, z) in m/s^2, gravity included and unfused, whatever
+  /// ``acceleration_source`` says. Used for saturation and frozen-data checks: at rest it is
+  /// the one channel whose sensor noise still moves the reading.
+  std::optional<std::array<double, 3>> raw_acceleration;
   /// Magnetic field (x, y, z) in tesla.
   std::optional<std::array<double, 3>> magnetic_field;
   /// Gravity vector (x, y, z) in m/s^2.
@@ -97,6 +101,19 @@ struct DriverState
   std::string hardware_id{"unknown"};
   /// Human-readable detail about the current state.
   std::string detail;
+  /// Whether the last attempt to apply the configuration failed on the hardware.
+  bool config_failed{false};
+  /// The most recent error, empty if none. Drivers report problems here, not in the log.
+  std::string last_error;
+};
+
+/// What ``ImuDriver::recover`` should try, in escalating order.
+enum class RecoveryAction
+{
+  /// Re-discover the device and re-arm its data stream. Cheap, keeps the connection.
+  Rearm,
+  /// Drop the transport connection and open it again.
+  Reconnect,
 };
 
 /// Called with each new sample, from whatever thread the hardware library delivers it on.
@@ -132,12 +149,18 @@ public:
   /// Return a snapshot of the driver's current connection and device status.
   virtual DriverState state() const = 0;
 
+  /// Try to bring a silent or frozen stream back. Must not block: the node calls this from
+  /// its watchdog. The node owns the policy (when, and which action); the driver owns the
+  /// mechanics.
+  virtual void recover(RecoveryAction action) = 0;
+
 protected:
   /// The most recently requested configuration.
   DriverConfig config_;
   /// The node's sample sink.
   SampleCallback on_sample_;
-  /// Where the driver reports its own problems.
+  /// For DEBUG traces only: problems are reported through ``DriverState``, and the node
+  /// decides what reaches the log.
   rclcpp::Logger logger_;
 };
 

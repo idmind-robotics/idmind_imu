@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -298,6 +299,13 @@ void FakeBrickd::accept_loop()
     ::setsockopt(connection, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
     {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      ++connection_count_;
+      if (silence_ == Silence::UntilReconnect) {
+        silence_ = Silence::None;
+      }
+    }
+    {
       std::lock_guard<std::mutex> lock(client_mutex_);
       client_fd_ = connection;
     }
@@ -342,12 +350,17 @@ void FakeBrickd::dispatch(
   const uint8_t sequence_number = (sequence_options >> 4) & 0x0F;
   const bool response_expected = (sequence_options & 0x08) != 0;
 
+  bool answer_enumerate = true;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     requests_.push_back(function_id);
+    answer_enumerate = answer_enumerate_;
   }
 
   if (function_id == kFunctionEnumerate) {
+    if (!answer_enumerate) {
+      return;
+    }
     // One unsolicited CALLBACK_ENUMERATE packet: uid 0, sequence 0, 34 bytes total.
     std::vector<uint8_t> body = identity_payload();
     body.push_back(0);  // enumeration_type = AVAILABLE
@@ -375,8 +388,12 @@ void FakeBrickd::dispatch(
     switch (function_id) {
       case kFunctionSetAllDataPeriod:
         all_data_period_ = static_cast<uint32_t>(read_le(payload, 0, 4));
+        if (silence_ == Silence::UntilRearm) {
+          silence_ = Silence::None;
+        }
         break;
       case kFunctionGetAllDataPeriod:
+        known = answer_get_all_data_period_;
         append_le(reply, all_data_period_, 4);
         break;
       case kFunctionSetSensorFusionMode:
@@ -489,6 +506,36 @@ bool FakeBrickd::status_led_enabled() const
   return status_led_enabled_;
 }
 
+void FakeBrickd::set_silence(Silence silence)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  silence_ = silence;
+}
+
+void FakeBrickd::set_answer_enumerate(bool answer)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  answer_enumerate_ = answer;
+}
+
+void FakeBrickd::set_answer_get_all_data_period(bool answer)
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  answer_get_all_data_period_ = answer;
+}
+
+size_t FakeBrickd::connection_count() const
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return connection_count_;
+}
+
+size_t FakeBrickd::request_count(uint8_t function_id) const
+{
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return static_cast<size_t>(std::count(requests_.begin(), requests_.end(), function_id));
+}
+
 bool FakeBrickd::push_all_data(const AllData & data)
 {
   // Payload: 22 int16 counts + int8 temperature + uint8 calibration = 46 bytes, so 54 with
@@ -509,6 +556,12 @@ bool FakeBrickd::push_all_data(const AllData & data)
   // otherwise be silently dropped, so wait for the fd rather than no-op.
   if (!wait_for_client(kClientWaitTimeout)) {
     return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (silence_ != Silence::None) {
+      return false;
+    }
   }
 
   std::lock_guard<std::mutex> lock(client_mutex_);

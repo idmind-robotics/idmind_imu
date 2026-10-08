@@ -30,3 +30,22 @@
     noise_estimate_when_still: true
     stationary_gyro_threshold: 0.02
     stationary_accel_threshold: 0.2
+    # -- Health and recovery (see the README's condition code table) --------------------------
+    # IMU_RATE_LOW when the data rate stays below this fraction of imu_freq for 3 s.
+    rate_warn_ratio: 0.8
+    # IMU_DATA_FROZEN when every field (accel, raw accel, gyro, mag, quaternion) is
+    # bit-identical this long. At rest only accelerometer noise keeps the frame moving.
+    frozen_timeout: 5.0
+    # Samples outside these limits are dropped and raise IMU_DATA_INVALID.
+    quaternion_norm_tolerance: 0.05
+    max_acceleration: 156.9  # m/s^2, the BNO-055's 16 g range
+    # The BNO-055 starts uncalibrated; IMU_UNCALIBRATED waits this long after the first sample.
+    calibration_grace_period: 60.0
+    # Recovery from a silent or frozen stream: re-arm once, then reconnect, backing off from
+    # recovery_backoff_initial. After recovery_max_attempts, IMU_RECOVERY_EXHAUSTED and one
+    # probe every reconnect_probe_period. Success means recovery_window seconds of good data.
+    recovery_max_attempts: 3
+    recovery_backoff_initial: 1.0
+    recovery_window: 10.0
+    reconnect_probe_period: 30.0
+    log_reminder_period: 30.0
