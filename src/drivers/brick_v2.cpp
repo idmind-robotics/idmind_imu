@@ -379,7 +379,12 @@ void ImuBrickV2Driver::on_all_data(
     sample.angular_velocity =
       conversions::angular_velocity_from_brick(to_array<3>(angular_velocity));
     sample.linear_acceleration = linear;
-    sample.magnetic_field = conversions::magnetic_field_from_brick(to_array<3>(magnetic_field));
+    // Fusion mode 2 (IMU mode) suspends the magnetometer and it reads exactly zero; that is
+    // not a measurement, so it is left out rather than published as a confident zero field.
+    if (fusion_mode != 2) {
+      sample.magnetic_field =
+        conversions::magnetic_field_from_brick(to_array<3>(magnetic_field));
+    }
     sample.gravity = conversions::acceleration_from_brick(to_array<3>(gravity_vector));
     sample.euler = conversions::euler_from_brick(to_array<3>(euler_angle));
     sample.temperature = static_cast<double>(temperature);

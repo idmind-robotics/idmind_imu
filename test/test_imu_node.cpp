@@ -516,7 +516,9 @@ TEST_F(ImuNodeTest, CovarianceTracksCalibrationRatherThanBeingFixed)
 
 TEST_F(ImuNodeTest, MagneticFieldCovarianceTracksMagCalibration)
 {
-  Harness harness(fake_, {rclcpp::Parameter("noise_window", 0)});
+  // Mode 1 uses the magnetometer; in the default mode 2 there is no field to publish.
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 0),
+      rclcpp::Parameter("imu_fusion_mode", 1)});
   auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 
@@ -591,7 +593,7 @@ TEST_F(ImuNodeTest, DiagnosticsCalibrationPreservesFieldOrder)
 
 TEST_F(ImuNodeTest, PublishesTemperatureMagneticFieldAndGravity)
 {
-  Harness harness(fake_);
+  Harness harness(fake_, {rclcpp::Parameter("imu_fusion_mode", 1)});
   auto temperatures = harness.subscribe<sensor_msgs::msg::Temperature>("temperature");
   auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
   auto gravities = harness.subscribe<geometry_msgs::msg::Vector3Stamped>("gravity");
@@ -838,6 +840,25 @@ TEST_F(ImuNodeTest, StandbyServiceSuspendsAndResumesPublishing)
         return imu_messages->size() > count_at_standby;
       },
       kMessageDeadline)) << "publishing did not resume after standby was disabled";
+}
+
+TEST_F(ImuNodeTest, NoMagneticFieldIsPublishedWhileTheMagnetometerIsSuspended)
+{
+  // Fusion mode 2 suspends the BNO-055 magnetometer, which then reads exactly zero. Measured
+  // on a Shield: (0, 0, 0) T for 10 minutes straight, published with a confident covariance.
+  Harness harness(fake_);  // default imu_fusion_mode 2
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        fake_.push_all_data(AllData{});
+        return imu_messages->size() >= 10;
+      },
+      kMessageDeadline)) << "no Imu messages received";
+  EXPECT_EQ(fields->size(), 0u) << "a zero magnetic field was published in fusion mode 2";
 }
 
 // -- Health: every condition code must raise and clear ----------------------------------------

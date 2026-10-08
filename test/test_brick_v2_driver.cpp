@@ -147,7 +147,9 @@ TEST_F(BrickV2DriverTest, StartReturnsPromptlyAndReachesConnected)
 
 TEST_F(BrickV2DriverTest, AllDataCallbackConvertsToSiUnits)
 {
-  auto driver = make_driver();
+  DriverConfig config;
+  config.imu_fusion_mode = 1;  // uses the magnetometer, so the field is reported
+  auto driver = make_driver(config);
   driver->start();
   ASSERT_TRUE(wait_until([&] {return driver->state().device_present;}, kStartDeadline))
     << "device never found";
@@ -402,6 +404,22 @@ TEST_F(BrickV2DriverTest, ConfigFailureIsReportedInStateAndClearsOnSuccess)
     wait_until([&] {return !driver->state().config_failed;}, std::chrono::seconds(10)))
     << "config failure never cleared";
   EXPECT_EQ(fake_.all_data_period(), 100u);
+
+  driver->stop();
+}
+
+TEST_F(BrickV2DriverTest, MagneticFieldIsOmittedWhileTheMagnetometerIsSuspended)
+{
+  // Fusion mode 2 suspends the magnetometer; its zeros are not a measurement.
+  auto driver = make_driver();  // default imu_fusion_mode 2
+  driver->start();
+  ASSERT_TRUE(wait_until([&] {return driver->state().device_present;}, kStartDeadline))
+    << "device never found";
+
+  fake_.push_all_data(AllData{});
+  const auto sample = samples_.pop(kSampleDeadline);
+  ASSERT_TRUE(sample.has_value());
+  EXPECT_FALSE(sample->magnetic_field.has_value());
 
   driver->stop();
 }
