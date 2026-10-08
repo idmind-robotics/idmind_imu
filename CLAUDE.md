@@ -158,8 +158,12 @@ driver's.
 - **`IMU_DATA_FROZEN` compares every field, raw accelerometer included.** On a still robot the
   gyro, the fused quaternion and (in mode 2) the magnetometer can all legitimately repeat;
   only accelerometer noise keeps the frame moving. Narrowing the check to fewer fields turns a
-  parked robot into an ERROR and a reconnect loop. `frozen_timeout` is not yet validated on
-  hardware (see the README).
+  parked robot into an ERROR and a reconnect loop. Measured on a parked Shield in mode 2 over
+  10 min: orientation repeated for 410 s and mag for the full 600 s, but all fields together
+  never for more than 2 frames (0.1 s), so the 5 s default has a 50x margin.
+- **No magnetic field in fusion mode 2.** The magnetometer is suspended and reads exactly
+  zero; the brick driver leaves `magnetic_field` empty there, so `~/magnetic_field` is not
+  published. Publishing it (as before) claimed a precise zero field.
 - **Calibration ignores `sys` and `mag` in fusion modes 0 and 2** (`health::calibration_level`).
   Keying on `sys` there reported WARN forever.
   `test_imu_node.UncalibratedIgnoresSysAndMagInFusionModeTwo` is the regression guard.
@@ -171,12 +175,14 @@ driver's.
 
 ## The BNO-055 `sys` calibration trap
 
-The `sys` calibration level only rises when the **magnetometer** is in use. In
-`imu_fusion_mode: 2` (the shipped default — fusion without magnetometer) it stays at 0
-forever, so anything keyed on `sys` is pinned at the worst-case ×100 factor permanently. That
-is why the calibration-scaled covariance looked like a fixed matrix in the field, and why the
-live measurement is the primary source rather than the scaling. Diagnosing this is one
-command: `ros2 topic echo /idmind_imu/calibration` and watch the first element.
+In `imu_fusion_mode: 2` (the shipped default — fusion without magnetometer) the calibration
+levels that depend on the magnetometer cannot be trusted to rise. Field reports had `sys`
+stuck at 0, pinning anything keyed on it at the worst-case ×100 factor; that is why the
+calibration-scaled covariance looked like a fixed matrix, and why the live measurement is the
+primary source rather than the scaling. It is not universal, though: on the Shield
+(2026-10-08) mode 2 reported `sys=3` and **`mag=0`**, so there the old all-four-minimum rule
+warned forever because of `mag`. Either way `health::calibration_level` ignores both in modes
+0 and 2. Diagnose with the Calibration diagnostic's `sys`/`gyro`/`acc`/`mag` keys.
 
 ## Units (IMU Brick 2.0 — v2, not v1)
 

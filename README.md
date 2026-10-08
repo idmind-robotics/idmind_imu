@@ -134,7 +134,7 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 |---|---|---|
 | `~/imu` | `sensor_msgs/Imu` | Orientation (quaternion), angular velocity (rad/s), linear acceleration (m/s²) |
 | `~/temperature` | `sensor_msgs/Temperature` | Sensor temperature (°C); `variance` from `temperature_stddev` |
-| `~/magnetic_field` | `sensor_msgs/MagneticField` | Tesla |
+| `~/magnetic_field` | `sensor_msgs/MagneticField` | Tesla. **Not published in fusion mode `2`**, which suspends the magnetometer (it reads exactly zero) |
 | `~/gravity` | `geometry_msgs/Vector3Stamped` | Gravity vector (m/s²) |
 | `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | Published at 1 Hz by `diagnostic_updater`; remapped by the `diagnostics_topic` launch argument |
 
@@ -173,9 +173,9 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 
   3. `imu_fusion_mode: 0` always overrides both for orientation, with the `-1` sentinel.
 
-  > Note the BNO-055 only raises its **`sys`** calibration when the magnetometer is in use. In
-  > `imu_fusion_mode: 2` (the default, no magnetometer) `sys` stays at 0 permanently, so that
-  > fallback is pinned at ×100 — which is why measuring from the signal matters.
+  > Note that in `imu_fusion_mode: 2` (the default, no magnetometer) the magnetometer-related
+  > calibration levels may never rise. Field reports had `sys` stuck at 0, pinning that
+  > fallback at ×100 — which is why measuring from the signal matters.
 
 - **Yaw wrapping is handled.** Orientation variance uses a circular mean and wrapped
   deviations, so a yaw sitting near ±π does not report a fake variance of ~9.87 rad².
@@ -239,15 +239,27 @@ off by doubling from `recovery_backoff_initial`, and one only counts as successf
 no latch and nothing to clear by hand: the IMU drives nothing, so retrying is always safe.
 
 **Calibration** ignores `sys` and `mag` in fusion modes `0` and `2`, which do not use the
-magnetometer: there `sys` never rises above 0, and counting it reported `WARN` forever.
+magnetometer. There they may never rise (on the Shield, `mag` stays 0 in mode `2`), and
+counting them reported `WARN` forever.
 
 **Frozen data on a still robot.** On a perfectly still robot, the gyro can repeat one value
 (1/16 °/s steps), the magnetometer is suspended in mode `2`, and the fused quaternion can sit
 on one value. Only raw accelerometer noise (about 1 LSB = 1 cm/s² RMS, from the datasheet)
 keeps the frame changing, which is why `IMU_DATA_FROZEN` requires *every* field to repeat,
-and for 5 s (about 100 samples at 20 Hz). **This has not yet been measured on hardware.**
-Before relying on it, park a robot in mode `2` for 10 minutes, record `~/imu`, and check that
-the longest run of identical frames is well below `frozen_timeout`.
+and for 5 s (about 100 samples at 20 Hz).
+
+Measured on a parked Shield in mode `2`, 10 minutes, 12,001 frames at 20 Hz:
+
+| Field | Longest identical run |
+|---|---|
+| Orientation | 8,208 frames (410 s) |
+| Magnetometer | the whole 600 s (suspended) |
+| Gyro | 3 frames (0.15 s) |
+| Raw accelerometer | 2 frames (0.10 s) |
+| **All together** | **2 frames (0.10 s)** |
+
+So the 5 s default sits 50× above the longest still-robot run, while a check on any single
+fused field would have fired on a parked robot.
 
 **Logging.** Each condition is logged once when raised (WARN or ERROR, prefixed with its
 code), once when cleared (INFO), and every `log_reminder_period` while it stays active.
