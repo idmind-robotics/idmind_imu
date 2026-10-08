@@ -25,16 +25,28 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     # Robot name
-    robot_name = DeclareLaunchArgument(name='robot_name', default_value='', description='Name of this robot, used for namespacing')
+    robot_name = DeclareLaunchArgument(
+        name='robot_name', default_value='',
+        description='Name of this robot, used for namespacing')
     ld.add_action(robot_name)
 
-    def_imu_cfg = os.path.join(get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml')
-    imu_cfg = DeclareLaunchArgument(name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU')
+    def_imu_cfg = os.path.join(
+        get_package_share_directory('idmind_imu'), 'config', 'idmind_imu.yaml')
+    imu_cfg = DeclareLaunchArgument(
+        name='imu_cfg', default_value=def_imu_cfg, description='Configuration file for IMU')
     ld.add_action(imu_cfg)
 
     # Log Level
-    log_level = DeclareLaunchArgument(name="log_level", default_value="warn", description="Log level for all nodes")
+    log_level = DeclareLaunchArgument(
+        name='log_level', default_value='warn', description='Log level for all nodes')
     ld.add_action(log_level)
+
+    # Diagnostics region. The default is an identity remap; a robot's launch file picks its
+    # region, e.g. /diagnostics/base, for the aggregator to group by.
+    diagnostics_topic = DeclareLaunchArgument(
+        name='diagnostics_topic', default_value='/diagnostics',
+        description='Topic the node publishes its diagnostics on')
+    ld.add_action(diagnostics_topic)
 
     imu_node = Node(
         package='idmind_imu',
@@ -45,7 +57,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[LaunchConfiguration('imu_cfg')],
         arguments=["--ros-args", "--log-level", LaunchConfiguration('log_level')],
-        remappings=[],
+        remappings=[('/diagnostics', LaunchConfiguration('diagnostics_topic'))],
     )
     ld.add_action(imu_node)
 
