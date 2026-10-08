@@ -57,6 +57,10 @@ source install/setup.bash
 ros2 launch idmind_imu idmind_imu_brick.launch.py
 ```
 
+Launch arguments: `robot_name` (namespace), `imu_cfg` (parameter file), `log_level`
+(default `warn`), and `diagnostics_topic` (default `/diagnostics`; set it to the robot's
+region, e.g. `/diagnostics/base`).
+
 Or directly, selecting a driver:
 
 ```bash
@@ -78,6 +82,11 @@ node; they are retained so existing launch files keep working.
 All are dynamically reconfigurable (`ros2 param set`); hardware-relevant changes are pushed
 to the driver immediately rather than polled.
 
+Values are validated. An invalid value **at startup** falls back to its default, is written
+back (so `ros2 param get` shows what is really used), and raises `IMU_PARAM_FALLBACK` until a
+valid value is set. An invalid value **at runtime** is rejected with a reason, and the whole
+batch is left unapplied.
+
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `driver` | string | `brick_v2` | Which IMU backend to load |
@@ -88,7 +97,7 @@ to the driver immediately rather than polled.
 | `imu_frame` | string | `imu` | `frame_id` stamped on all messages |
 | `imu_leds` | bool | `false` | Drive the brick's LEDs and status LED |
 | `imu_fusion_mode` | int | `2` | BNO-055 fusion mode — see below |
-| `timeout` | double | `1.0` | Seconds without data before diagnostics report an error |
+| `timeout` | double | `1.0` | Seconds without data before `IMU_NO_DATA`; also the grace for `IMU_CONNECT_FAILED` / `IMU_DEVICE_MISSING` |
 | `auto_reconnect` | bool | `true` | Let the driver reconnect automatically |
 | `acceleration_source` | string | `linear` | `linear` (gravity removed) or `raw` (gravity included) |
 | `orientation_stddev` | double | `0.01` | Base orientation stddev at full calibration |
@@ -100,6 +109,16 @@ to the driver immediately rather than polled.
 | `noise_estimate_when_still` | bool | `true` | Only update the estimate while the robot looks stationary |
 | `stationary_gyro_threshold` | double | `0.02` | Gyro magnitude (rad/s) below which the robot counts as still |
 | `stationary_accel_threshold` | double | `0.2` | Allowed accel deviation (m/s²) from the window mean while still |
+| `rate_warn_ratio` | double | `0.8` | `IMU_RATE_LOW` when the rate stays below this × `imu_freq` for 3 s |
+| `frozen_timeout` | double | `5.0` | `IMU_DATA_FROZEN` when every field is bit-identical this long (s) |
+| `quaternion_norm_tolerance` | double | `0.05` | Samples with quaternion norm outside `1 ± this` are dropped |
+| `max_acceleration` | double | `156.9` | Samples with raw acceleration above this (m/s², 16 g) are dropped |
+| `calibration_grace_period` | double | `60.0` | Seconds after the first sample before `IMU_UNCALIBRATED` can raise |
+| `recovery_max_attempts` | int | `3` | Recovery attempts before `IMU_RECOVERY_EXHAUSTED` |
+| `recovery_backoff_initial` | double | `1.0` | Delay (s) before the first attempt; doubles after each |
+| `recovery_window` | double | `10.0` | Seconds of healthy data for a recovery to count as successful |
+| `reconnect_probe_period` | double | `30.0` | Seconds between probes once the attempts are exhausted |
+| `log_reminder_period` | double | `30.0` | Seconds between log reminders of a condition still active; `0` disables |
 
 **Fusion modes:** `0` off (raw data — orientation is meaningless), `1` on with magnetometer
 (absolute heading), `2` on without magnetometer (**relative yaw that drifts** — the default),
@@ -117,13 +136,13 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 | `~/temperature` | `sensor_msgs/Temperature` | Sensor temperature (°C); `variance` from `temperature_stddev` |
 | `~/magnetic_field` | `sensor_msgs/MagneticField` | Tesla |
 | `~/gravity` | `geometry_msgs/Vector3Stamped` | Gravity vector (m/s²) |
-| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | Published at 1 Hz by `diagnostic_updater` |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | Published at 1 Hz by `diagnostic_updater`; remapped by the `diagnostics_topic` launch argument |
 
 ### Services
 
 | Name | Type | Description |
 |---|---|---|
-| `~/ready` | `std_srvs/Trigger` | Reports whether the node finished initialising |
+| `~/ready` | `std_srvs/Trigger` | `success` only when the state is `RUNNING` and data is fresh. `message` carries the state and, if not ready, the most severe active code, e.g. `idmind_imu is not ready (NO_DEVICE): IMU_DEVICE_MISSING` |
 | `~/standby` | `std_srvs/SetBool` | `data: true` suspends all data-topic publishing; `data: false` resumes it. Samples keep arriving from the driver while suspended, so the watchdog, diagnostics and the noise estimate stay live (the `standby` key in the "Data flow" diagnostic reflects the current state). |
 
 ### Covariances
@@ -177,12 +196,63 @@ orientation de-weighted during warm-up.
 
 ### Diagnostics
 
-Three tasks are published: **Connection** (transport reachable, device enumerated),
-**Data flow** (observed rate and age of the last sample; `ERROR` past `timeout`; also reports
-`loop_period_s`, the watchdog's own measured tick period — a leading indicator of an executor
-stall, since it moves at `control_freq` while the rest of this task only resolves at the
-Updater's 1 Hz rate), and **Calibration** (`sys`/`gyro`/`acc`/`mag` as named values; `WARN`
-while any of them is 0).
+Status is reported on `/diagnostics` only, as severity levels plus KeyValues, by three tasks:
+**Connection**, **Data flow** and **Calibration**. Every task has an `active_codes` key, a
+comma-separated list of the condition codes below, most severe first. The task's level is the
+worst of them, and its message is the worst condition's message, prefixed with its code.
+Monitors should parse the codes, never the messages.
+
+| Code | Level | Task | Raised when | Cleared when |
+|---|---|---|---|---|
+| `IMU_CONNECT_FAILED` | ERROR | Connection | Transport unreachable for `timeout` | Connected |
+| `IMU_DEVICE_MISSING` | ERROR | Connection | Connected, but no IMU found for `timeout` | Device enumerated |
+| `IMU_CONFIG_FAILED` | WARN | Connection | A hardware getter/setter failed while applying the config | The next config apply succeeds |
+| `IMU_RECOVERING` | WARN | Connection | Silent or frozen while connected; recovery pending or running | Data healthy again |
+| `IMU_RECOVERY_EXHAUSTED` | ERROR | Connection | `recovery_max_attempts` spent; probing every `reconnect_probe_period` | Data healthy again |
+| `IMU_PARAM_FALLBACK` | WARN | Connection | A startup parameter was invalid; its default is in use | A valid value is set |
+| `IMU_NO_DATA` | ERROR | Data flow | No sample for `timeout` | A sample arrives |
+| `IMU_RATE_LOW` | WARN | Data flow | Rate below `rate_warn_ratio` × `imu_freq` for 3 s | Back at rate for 3 s |
+| `IMU_DATA_INVALID` | WARN | Data flow | A sample was dropped: non-finite value, quaternion norm outside `1 ± quaternion_norm_tolerance`, or raw acceleration above `max_acceleration` | 1 s without an invalid sample |
+| `IMU_DATA_FROZEN` | ERROR | Data flow | **Every** field (quaternion, gyro, linear and raw acceleration, mag) bit-identical for `frozen_timeout` | Any field changes |
+| `IMU_UNCALIBRATED` | WARN | Calibration | A calibration level the fusion mode uses is 0, after `calibration_grace_period` | That level rises |
+
+Other KeyValues:
+
+- **Connection:** `state`, `recovery_attempts`, `last_error` (the driver's most recent error),
+  `detail`.
+- **Data flow:** `rate_hz`, `age_s`, `loop_period_s` (the watchdog's own measured tick period, a
+  leading indicator of an executor stall, since it moves at `control_freq` while the rest of
+  the task only resolves at the Updater's 1 Hz rate), and `standby`.
+- **Calibration:** `sys`, `gyro`, `acc`, `mag` and `fusion_mode`. All four levels are always
+  reported. The task is `STALE` until the first sample.
+
+**Node states**, reported as `state`: `DISCONNECTED` (transport down), `NO_DEVICE` (connected,
+no IMU), `RUNNING`, and `RECOVERING` (connected, but silent or frozen). Standby is a flag, not
+a state.
+
+**Recovery.** While connected but silent or frozen, the node runs a ladder: first it
+re-enumerates and re-sends the all-data period (a brick that stopped streaming still reports
+the period it was given), then it drops and reopens the BrickDaemon connection. Attempts back
+off by doubling from `recovery_backoff_initial`, and one only counts as successful after
+`recovery_window` seconds of healthy data. After `recovery_max_attempts`, the node raises
+`IMU_RECOVERY_EXHAUSTED` and keeps reconnecting once every `reconnect_probe_period`. There is
+no latch and nothing to clear by hand: the IMU drives nothing, so retrying is always safe.
+
+**Calibration** ignores `sys` and `mag` in fusion modes `0` and `2`, which do not use the
+magnetometer: there `sys` never rises above 0, and counting it reported `WARN` forever.
+
+**Frozen data on a still robot.** On a perfectly still robot, the gyro can repeat one value
+(1/16 °/s steps), the magnetometer is suspended in mode `2`, and the fused quaternion can sit
+on one value. Only raw accelerometer noise (about 1 LSB = 1 cm/s² RMS, from the datasheet)
+keeps the frame changing, which is why `IMU_DATA_FROZEN` requires *every* field to repeat,
+and for 5 s (about 100 samples at 20 Hz). **This has not yet been measured on hardware.**
+Before relying on it, park a robot in mode `2` for 10 minutes, record `~/imu`, and check that
+the longest run of identical frames is well below `frozen_timeout`.
+
+**Logging.** Each condition is logged once when raised (WARN or ERROR, prefixed with its
+code), once when cleared (INFO), and every `log_reminder_period` while it stays active.
+Otherwise INFO is used only at startup and shutdown. Drivers log only at DEBUG and report
+problems through their state.
 
 ---
 
@@ -190,15 +260,17 @@ while any of them is 0).
 
 1. Add `include/idmind_imu/drivers/<your_imu>.hpp` and `src/drivers/<your_imu>.cpp` with a
    class deriving from `ImuDriver` (`include/idmind_imu/drivers/driver.hpp`) implementing
-   `start()`, `stop()`, `apply_config()` and `state()`.
+   `start()`, `stop()`, `apply_config()`, `state()` and `recover()`.
 2. Convert readings to SI units and report them by calling the sample callback with an
    `ImuSample`. Put reusable unit maths in `src/conversions.cpp` and unit test it there.
 3. Add one line to the table in `src/drivers/registry.cpp`, and the new `.cpp` to the library
    in `CMakeLists.txt`.
 4. Select it at runtime with `-p driver:=<your_imu>`.
 
-`start()` must not block — spawn threads if the transport needs them — and `stop()` must be
-idempotent.
+`start()` and `recover()` must not block — spawn threads if the transport needs them — and
+`stop()` must be idempotent. Report problems through `DriverState` (`config_failed`,
+`last_error`) rather than logging them: the node turns them into condition codes. Fill
+`raw_acceleration` if the hardware has it, since the saturation and frozen-data checks use it.
 
 ## Tests
 
@@ -213,9 +285,13 @@ setters and the sensor callback path are all exercised against the real, unmodif
 | Target | What it covers |
 |---|---|
 | `test_conversions` | Pure unit maths: scaling, field order, covariance construction |
+| `test_health` | Condition tracker, recovery policy, debounce, sample validation, calibration rule |
 | `test_fake_brickd` | That the fake is convincing to the raw TinkerForge bindings |
-| `test_brick_v2_driver` | Driver lifecycle, SI conversion, config convergence, clean shutdown |
-| `test_imu_node` | The real node end to end: topics, diagnostics, service, live reconfigure |
+| `test_brick_v2_driver` | Driver lifecycle, SI conversion, config convergence, recovery actions, error reporting, clean shutdown |
+| `test_imu_node` | The real node end to end: topics, services, live reconfigure, and every condition code raising **and** clearing, including the full recovery ladder |
+
+The fake can inject faults: a silent stream that heals on re-arm, on reconnect or never, an
+unanswered enumerate, and an unanswered getter.
 
 Every wait in the suite polls against a hard deadline rather than sleeping, so a regression
 surfaces as a fast, clear failure instead of a hang.

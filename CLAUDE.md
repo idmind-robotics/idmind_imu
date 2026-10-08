@@ -36,6 +36,7 @@ file, never another node.
 ```
 include/idmind_imu/
   conversions.hpp        # pure unit + covariance maths. No ROS, no tinkerforge. Unit tested.
+  health.hpp             # condition codes, ConditionTracker, RecoveryPolicy, Debounce. Pure.
   noise_estimator.hpp    # sliding-window per-axis variance. Pure, unit tested.
   imu_node.hpp           # ROS node: params, publishers, diagnostics, watchdog. No hardware code.
   drivers/driver.hpp     # ImuDriver ABC, ImuSample, DriverConfig, DriverState
@@ -92,6 +93,10 @@ a callback stalls the entire sensor stream. So:
   auto-reconnect only covers reconnection *after* a first successful connect.
 - `on_all_data` converts and calls `on_sample`, swallowing exceptions — an exception escaping
   into the C frame above it would be undefined behaviour.
+- `recover()` only enqueues: re-arm and reconnect run on the worker thread. Reconnect calls
+  `ipcon_disconnect`, which joins the library's callback thread, so it must **never** run in a
+  callback. `stop()` disconnects again after joining the worker, which tears down a reconnect
+  that landed during shutdown.
 
 `self._imu`'s C++ equivalent is `device_`, a **`shared_ptr<Device>`** guarded by `mutex_`.
 Copy the `shared_ptr` out under the lock and do hardware I/O with the lock released
@@ -106,8 +111,10 @@ afterwards), join our own threads, then release the device. The joins are delibe
 unbounded — detaching would leave a thread holding `this` after destruction.
 
 In the node, `on_sample` runs on a driver thread while the watchdog runs on an executor
-thread; shared state is under `mutex_`, and publishing happens outside it. `log()` has its own
-`log_mutex_` so it can be called from a path that already holds `mutex_`.
+thread; shared state, including the `ConditionTracker` and `RecoveryPolicy`, is under
+`mutex_`, and publishing happens outside it. The node reads `driver_->state()` and calls
+`driver_->recover()` **without** holding `mutex_`, so its lock is never held while taking the
+driver's.
 
 ## Invariants that exist for a reason — do not "simplify" these
 
@@ -144,6 +151,23 @@ thread; shared state is under `mutex_`, and publishing happens outside it. `log(
   compared separately. The old code OR-ed them, which could never converge upward.
 - **Do not add a `tinkerforge` dependency to `package.xml`.** There is no rosdep rule for it;
   the bindings are fetched by CMake precisely so no such dependency is needed.
+
+- **No latch, ever.** The IMU drives nothing, so recovery never gives up: after
+  `recovery_max_attempts` it reports `IMU_RECOVERY_EXHAUSTED` and keeps probing. Do not copy
+  zlac's `HUMAN_REQUIRED` / `clear_faults` here.
+- **`IMU_DATA_FROZEN` compares every field, raw accelerometer included.** On a still robot the
+  gyro, the fused quaternion and (in mode 2) the magnetometer can all legitimately repeat;
+  only accelerometer noise keeps the frame moving. Narrowing the check to fewer fields turns a
+  parked robot into an ERROR and a reconnect loop. `frozen_timeout` is not yet validated on
+  hardware (see the README).
+- **Calibration ignores `sys` and `mag` in fusion modes 0 and 2** (`health::calibration_level`).
+  Keying on `sys` there reported WARN forever.
+  `test_imu_node.UncalibratedIgnoresSysAndMagInFusionModeTwo` is the regression guard.
+- **Invalid samples are dropped before the noise estimator**, not just flagged: a zero
+  quaternion or a saturated reading must not reach a filter or poison the covariance.
+- **An invalid startup parameter falls back to its default**; it must not throw. Throwing in
+  the constructor is how the pre-refactor node died on a typo in the YAML. Startup and runtime
+  share one rule set, `check_parameter`.
 
 ## The BNO-055 `sys` calibration trap
 
@@ -196,12 +220,19 @@ sources. Classify a report by the `#0` frame of each stack — deeper frames are
    atomic unlock-and-wait of `pthread_cond_wait`, and every one of these accesses is inside or
    immediately after a `condition_variable` predicate.
 
+Under the node tests there are three more noisy sources, none ours: lock-order inversions
+and "double lock of a mutex" whose `#0`/`#1` frames are in FastRTPS (`eprosima::...::
+ResourceEvent`), and a race on `rclcpp::Subscription` teardown when a test's subscription is
+destroyed while the executor still spins. Callbacks in test helpers must therefore capture
+shared state by `shared_ptr`, never `this` (see `DiagnosticsWatcher`).
+
 TSan did catch one real bug: `FakeBrickd::stop()` used to write `server_fd_` while
 `accept_loop()` read it. The listening socket is now closed only after the accept thread has
 been joined. If you touch that teardown, re-run TSan.
 
-TSan needs ASLR turned down in a container: `sysctl -w vm.mmap_rnd_bits=28` (needs
-`--privileged`) and `setarch "$(uname -m)" -R ./test_binary`.
+TSan needs ASLR turned down in a container: `setarch "$(uname -m)" -R ./test_binary` in a
+`--privileged` container is enough. Avoid `sysctl -w vm.mmap_rnd_bits=28`: `vm.*` is not
+namespaced, so it changes the **host** kernel.
 
 Tests must poll with a deadline, never a bare sleep. If you start a node with
 `ros2 run` from a script, use `setsid` and kill the process **group** — killing the `ros2`
@@ -214,9 +245,14 @@ rate measurement.
   immediately via `declare_parameter<T>()`'s return value.
 - Node exposes a `ready` `Trigger` service, a `standby` `SetBool` service (suspends data-topic
   publishing without stopping the driver — `on_sample` still runs its bookkeeping), an
-  `add_on_set_parameters_callback` handler, and a `timer` heartbeat topic. Use
-  `log(msg, "warn")` (duplicate-suppressing) rather than `RCLCPP_*` directly in node code.
-  Drivers use `RCLCPP_*` on their own logger.
+  `add_on_set_parameters_callback` handler, and a `timer` heartbeat topic.
+- **Every WARN or ERROR carries an `IMU_*` code** and goes through `tracker_.set(task, code,
+  active, level, msg)`, which logs on raise, on clear and every `log_reminder_period`. Do not
+  call `RCLCPP_WARN`/`RCLCPP_ERROR` for a condition directly. INFO is for startup and shutdown
+  only. Drivers log at DEBUG and report problems through `DriverState`.
+- A new condition needs: a constant in `health.hpp`, a `tracker_.set` in
+  `evaluate_health_locked`, a row in the README code table, and a node test that shows it
+  raising **and** clearing.
 - Diagnostics go through `diagnostic_updater::Updater`, which publishes `/diagnostics` on its
   own 1 Hz timer. Do **not** call `force_update()` from the watchdog — that would republish
   at `control_freq`.
