@@ -99,6 +99,7 @@ set_property(TARGET tinkerforge_bindings PROPERTY POSITION_INDEPENDENT_CODE ON)
 # ---------------------------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
   src/conversions.cpp
+  src/health.cpp
   src/noise_estimator.cpp
   src/imu_node.cpp
   src/drivers/registry.cpp
@@ -171,6 +172,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_conversions test/test_conversions.cpp)
   target_link_libraries(test_conversions ${PROJECT_NAME})
+
+  ament_add_gtest(test_health test/test_health.cpp)
+  target_link_libraries(test_health ${PROJECT_NAME})
 
   ament_add_gtest(test_noise_estimator test/test_noise_estimator.cpp)
   target_link_libraries(test_noise_estimator ${PROJECT_NAME})
