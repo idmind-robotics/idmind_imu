@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -27,6 +28,7 @@ using idmind_imu::conversions::Calibration;
 using idmind_imu::conversions::CalibrationAxis;
 using idmind_imu::conversions::acceleration_from_brick;
 using idmind_imu::conversions::angular_velocity_from_brick;
+using idmind_imu::conversions::blended_covariance;
 using idmind_imu::conversions::decode_calibration;
 using idmind_imu::conversions::diagonal_covariance;
 using idmind_imu::conversions::euler_from_brick;
@@ -309,4 +311,73 @@ TEST(Conversions, OrientationCovarianceNoCalibrationIsWorstCase)
   const auto worst = orientation_covariance(1, Calibration{0, 0, 0, 0}, 0.01);
   EXPECT_DOUBLE_EQ(none[0], worst[0]);
   EXPECT_DOUBLE_EQ(none[8], worst[8]);
+}
+
+TEST(Conversions, BlendedCovarianceWithoutMeasurementIsTheFallback)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  EXPECT_EQ(blended_covariance(std::nullopt, fallback, floor), fallback);
+}
+
+TEST(Conversions, BlendedCovarianceMeasuredCanOnlyRaiseAboveTheFloor)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  ASSERT_DOUBLE_EQ(floor[0], 0.01);
+  // Below the floor on x, equal on y, above on z
+  const auto cov = blended_covariance(std::array<double, 3>{1e-9, 0.01, 0.5}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], 0.01);
+  EXPECT_DOUBLE_EQ(cov[4], 0.01);
+  EXPECT_DOUBLE_EQ(cov[8], 0.5);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, BlendedCovarianceSilentAxisTakesTheFallbackPerAxis)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  const auto cov = blended_covariance(std::array<double, 3>{0.0, 0.5, 0.0}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], fallback[0]);
+  EXPECT_DOUBLE_EQ(cov[4], 0.5);
+  EXPECT_DOUBLE_EQ(cov[8], fallback[8]);
+}
+
+TEST(Conversions, BlendedCovarianceFloorIncludesTheYawDriftInFusionMode2)
+{
+  const auto fallback = orientation_covariance(2, Calibration{0, 0, 0, 0}, 0.01);
+  const auto floor = orientation_covariance(2, Calibration{3, 3, 3, 3}, 0.01);
+  const auto cov = blended_covariance(std::array<double, 3>{1e-9, 1e-9, 1e-9}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], 1e-4);
+  EXPECT_NEAR(cov[8], 1e-4 * kYawDriftFactor, 1e-18);
+}
+
+TEST(Conversions, BlendedCovarianceKeepsTheSentinelBehaviour)
+{
+  const auto sentinel = orientation_covariance(0, Calibration{3, 3, 3, 3}, 0.01);
+  ASSERT_EQ(sentinel[0], -1.0);
+  // A silent axis with a sentinel fallback has nothing to borrow
+  EXPECT_EQ(
+    blended_covariance(std::array<double, 3>{0.0, 1e-4, 1e-4}, sentinel, sentinel), sentinel);
+  // A fully positive measurement stands, as before
+  const auto cov = blended_covariance(std::array<double, 3>{1e-4, 2e-4, 3e-4}, sentinel, sentinel);
+  EXPECT_DOUBLE_EQ(cov[0], 1e-4);
+  EXPECT_DOUBLE_EQ(cov[4], 2e-4);
+  EXPECT_DOUBLE_EQ(cov[8], 3e-4);
+  // Sentinel without a measurement stays the sentinel
+  EXPECT_EQ(blended_covariance(std::nullopt, sentinel, sentinel), sentinel);
 }

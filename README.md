@@ -148,9 +148,15 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 ### Covariances
 
 - Off-diagonal terms are always exactly zero — the matrices are strictly diagonal.
-- **Covariance is measured from the live signal.** Each axis reports the variance of the last
-  `noise_window` samples, so the matrix changes from message to message rather than being a
-  constant. This is the primary source; the fallbacks below only apply when it is unavailable.
+- **Covariance is measured from the live signal, but never below the configured one.** Each
+  axis measures the variance of the last `noise_window` samples, and reports
+  `max(measured, floor)`, where the floor is the configured `*_stddev` squared at full
+  calibration (the ×1 row below; for orientation in `imu_fusion_mode: 2` it includes the yaw
+  drift factor ×100 on yaw). The measurement can only *raise* the variance, never undercut it.
+  Why: the noise measured while the robot is still underestimates the real error while moving
+  (a still yaw has ~0 variance although yaw in fusion mode 2 drifts), and reporting that would
+  tell a filter such as the EKF the IMU is almost perfectly certain. So the matrix still
+  changes from message to message once the measured noise exceeds the floor.
 
 - **The estimate is only updated while the robot is still.** A moving IMU's variance is
   dominated by real motion, not sensor noise, and publishing that would tell a filter to
@@ -159,7 +165,8 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 
 - **Fallback chain**, applied per axis, so a single silent axis never discards a good
   measurement on the other two:
-  1. measured variance, once the window has filled and that axis is non-zero;
+  1. measured variance (once the window has filled and that axis is non-zero), raised to the
+     floor above if it is lower;
   2. otherwise the configured `*_stddev`, scaled by the BNO-055 calibration level for *that*
      sensor — orientation with `sys`, angular velocity with `gyro`, linear acceleration with
      `acc`, magnetic field with `mag`:
@@ -175,7 +182,8 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 
   > Note that in `imu_fusion_mode: 2` (the default, no magnetometer) the magnetometer-related
   > calibration levels may never rise. Field reports had `sys` stuck at 0, pinning that
-  > fallback at ×100 — which is why measuring from the signal matters.
+  > fallback at ×100. The floor does not depend on the calibration level, so a stuck level
+  > cannot inflate it.
 
 - **Yaw wrapping is handled.** Orientation variance uses a circular mean and wrapped
   deviations, so a yaw sitting near ±π does not report a fake variance of ~9.87 rad².

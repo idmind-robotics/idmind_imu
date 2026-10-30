@@ -125,6 +125,24 @@ Covariance orientation_covariance(
   const std::optional<Calibration> & calibration,
   double stddev);
 
+/// Combine a variance measured from the live signal with the configured covariance, per axis.
+///
+/// \p fallback is the calibration-scaled covariance and \p floor the same covariance at full
+/// calibration (for orientation in fusion mode 2 that includes kYawDriftFactor on yaw).
+/// Without a measurement the result is \p fallback. With one, a measured axis reports
+/// ``max(measured, floor)``: the measurement can only raise the variance, never undercut the
+/// configured one, because the noise of a still sensor underestimates its error while moving.
+///
+/// An axis whose measured variance is not strictly positive (a stuck or quantised sensor reads
+/// exactly zero) takes the fallback instead, per axis, so one silent axis never discards a
+/// good measurement on the other two. A fallback with the -1 sentinel in element 0 has no
+/// per-axis values to borrow, so a non-positive measurement then returns the sentinel, and a
+/// fully positive measurement is reported as it is (the floor is the sentinel too).
+Covariance blended_covariance(
+  const std::optional<std::array<double, 3>> & measured,
+  const Covariance & fallback,
+  const Covariance & floor);
+
 }  // namespace conversions
 }  // namespace idmind_imu
 

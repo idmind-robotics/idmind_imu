@@ -378,8 +378,10 @@ TEST_F(ImuNodeTest, CovarianceIsMeasuredFromTheLiveSignal)
   // The whole point of the noise estimator: with a varying signal the published covariance
   // must differ between messages. A calibration-scaled matrix is a 4-value step function and
   // would be byte-identical in every message, which is what "fixed matrix" meant.
+  // A small configured stddev keeps the floor below the measured jitter
   Harness harness(fake_, {rclcpp::Parameter("noise_window", 8),
-      rclcpp::Parameter("noise_estimate_when_still", false)});
+      rclcpp::Parameter("noise_estimate_when_still", false),
+      rclcpp::Parameter("angular_velocity_stddev", std::vector<double>{1e-4, 1e-4, 1e-4})});
   auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
   ASSERT_TRUE(harness.wait_for_device()) << "device never found";
 
@@ -417,6 +419,38 @@ TEST_F(ImuNodeTest, CovarianceIsMeasuredFromTheLiveSignal)
   EXPECT_TRUE(covariance_changed)
     << "angular_velocity_covariance never changed across " << all.size()
     << " messages - it is still a fixed matrix";
+}
+
+TEST_F(ImuNodeTest, MeasuredCovarianceNeverUndercutsTheConfiguredFloor)
+{
+  // A near-silent signal measures far less variance than the configured stddev. The
+  // measurement may only raise the reported variance above the full-calibration floor, so
+  // a still sensor is never reported as more certain than configured.
+  Harness harness(fake_, {rclcpp::Parameter("noise_window", 4),
+      rclcpp::Parameter("noise_estimate_when_still", false)});
+  auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
+  ASSERT_TRUE(harness.wait_for_device()) << "device never found";
+
+  int tick = 0;
+  ASSERT_TRUE(
+    wait_until(
+      [&] {
+        AllData data;
+        // One count of gyro jitter: a measured variance orders of magnitude below 0.005236^2
+        data.angular_velocity = {static_cast<int16_t>(16 + (tick++ % 2)), 0, 1};
+        data.calibration_status = 0xFF;
+        fake_.push_all_data(data);
+        return imu_messages->size() >= 20;
+      },
+      kMessageDeadline)) << "not enough Imu messages";
+
+  const double floor = 0.005236 * 0.005236;
+  for (const auto & msg : imu_messages->all()) {
+    EXPECT_GE(msg.angular_velocity_covariance[0], floor - 1e-9);
+    EXPECT_GE(msg.angular_velocity_covariance[4], floor - 1e-9);
+    EXPECT_GE(msg.angular_velocity_covariance[8], floor - 1e-9);
+  }
+  EXPECT_NEAR(imu_messages->all().back().angular_velocity_covariance[0], floor, 1e-9);
 }
 
 TEST_F(ImuNodeTest, MeasuredCovarianceNeverCollapsesToZero)

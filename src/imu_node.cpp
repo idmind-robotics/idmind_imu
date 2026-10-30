@@ -131,36 +131,6 @@ std::optional<std::string> check_parameter(const rclcpp::Parameter & parameter)
   return std::nullopt;
 }
 
-/// Combine a measured variance with a fallback covariance, axis by axis.
-///
-/// A perfectly quiet axis - a stuck sensor, or one whose quantised output never moves while
-/// the robot is still - measures exactly zero variance. Publishing that would claim the
-/// reading is perfectly certain, so such an axis takes the fallback instead. The choice is
-/// per axis on purpose: one silent axis must not discard a good measurement on the other two.
-conversions::Covariance blended_covariance(
-  const std::optional<std::array<double, 3>> & measured,
-  const conversions::Covariance & fallback)
-{
-  if (!measured.has_value()) {
-    return fallback;
-  }
-
-  // A fallback of -1 in slot 0 is the "no estimate available" sentinel, which has no per-axis
-  // variances to borrow from.
-  const bool fallback_is_sentinel = fallback[0] < 0.0;
-  std::array<double, 3> variance{fallback[0], fallback[4], fallback[8]};
-
-  for (size_t axis = 0; axis < 3; ++axis) {
-    const double value = (*measured)[axis];
-    if (value > 0.0) {
-      variance[axis] = value;
-    } else if (fallback_is_sentinel) {
-      return fallback;
-    }
-  }
-  return conversions::covariance_from_variance(variance);
-}
-
 }  // namespace
 
 namespace
@@ -797,8 +767,11 @@ void ImuNode::publish_imu(
     msg.orientation.z = (*sample.orientation)[2];
     msg.orientation.w = (*sample.orientation)[3];
   }
-  // Prefer variance measured from the live signal; fall back to the configured stddev scaled
-  // by calibration when no window has filled yet. Fusion off still wins over both.
+  // Variance measured from the live signal can only raise the reported value above a floor:
+  // the configured stddev at full calibration. Stationary noise underestimates the error while
+  // moving (a still yaw has ~0 variance although it drifts). Without a measurement the
+  // configured stddev scaled by calibration is reported. Fusion off wins over both.
+  const conversions::Calibration full_calibration{3, 3, 3, 3};
   const auto orientation_fallback = conversions::orientation_covariance(
     fusion_mode, sample.calibration, params.orientation_stddev);
   if (fusion_mode == 0) {
@@ -806,7 +779,10 @@ void ImuNode::publish_imu(
     msg.orientation_covariance = orientation_fallback;
   } else {
     msg.orientation_covariance =
-      blended_covariance(params.measured_orientation, orientation_fallback);
+      conversions::blended_covariance(
+      params.measured_orientation, orientation_fallback,
+      conversions::orientation_covariance(
+        fusion_mode, full_calibration, params.orientation_stddev));
   }
 
   if (sample.angular_velocity.has_value()) {
@@ -814,10 +790,13 @@ void ImuNode::publish_imu(
     msg.angular_velocity.y = (*sample.angular_velocity)[1];
     msg.angular_velocity.z = (*sample.angular_velocity)[2];
   }
-  msg.angular_velocity_covariance = blended_covariance(
+  msg.angular_velocity_covariance = conversions::blended_covariance(
     params.measured_angular_velocity,
     conversions::scaled_covariance(
       params.angular_velocity_stddev, sample.calibration,
+      conversions::CalibrationAxis::Gyroscope),
+    conversions::scaled_covariance(
+      params.angular_velocity_stddev, full_calibration,
       conversions::CalibrationAxis::Gyroscope));
 
   if (sample.linear_acceleration.has_value()) {
@@ -825,10 +804,13 @@ void ImuNode::publish_imu(
     msg.linear_acceleration.y = (*sample.linear_acceleration)[1];
     msg.linear_acceleration.z = (*sample.linear_acceleration)[2];
   }
-  msg.linear_acceleration_covariance = blended_covariance(
+  msg.linear_acceleration_covariance = conversions::blended_covariance(
     params.measured_linear_acceleration,
     conversions::scaled_covariance(
       params.linear_acceleration_stddev, sample.calibration,
+      conversions::CalibrationAxis::Accelerometer),
+    conversions::scaled_covariance(
+      params.linear_acceleration_stddev, full_calibration,
       conversions::CalibrationAxis::Accelerometer));
 
   imu_pub_->publish(msg);
@@ -858,10 +840,14 @@ void ImuNode::publish_magnetic_field(
   msg.magnetic_field.x = magnetic_field[0];
   msg.magnetic_field.y = magnetic_field[1];
   msg.magnetic_field.z = magnetic_field[2];
-  msg.magnetic_field_covariance = blended_covariance(
+  const conversions::Calibration full_calibration{3, 3, 3, 3};
+  msg.magnetic_field_covariance = conversions::blended_covariance(
     params.measured_magnetic_field,
     conversions::scaled_covariance(
-      params.magnetic_field_stddev, calibration, conversions::CalibrationAxis::Magnetometer));
+      params.magnetic_field_stddev, calibration, conversions::CalibrationAxis::Magnetometer),
+    conversions::scaled_covariance(
+      params.magnetic_field_stddev, full_calibration,
+      conversions::CalibrationAxis::Magnetometer));
   mag_pub_->publish(msg);
 }
 

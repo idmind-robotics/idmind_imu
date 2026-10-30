@@ -14,6 +14,7 @@
 
 #include "idmind_imu/conversions.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace idmind_imu
@@ -161,6 +162,30 @@ Covariance orientation_covariance(
   }
 
   return diagonal_covariance(base_variance, base_variance, yaw_variance);
+}
+
+Covariance blended_covariance(
+  const std::optional<std::array<double, 3>> & measured,
+  const Covariance & fallback,
+  const Covariance & floor)
+{
+  if (!measured.has_value()) {
+    return fallback;
+  }
+
+  const bool fallback_is_sentinel = fallback[0] < 0.0;
+  const bool floor_is_sentinel = floor[0] < 0.0;
+  std::array<double, 3> variance{fallback[0], fallback[4], fallback[8]};
+
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const double value = (*measured)[axis];
+    if (value > 0.0) {
+      variance[axis] = floor_is_sentinel ? value : std::max(value, floor[axis * 4]);
+    } else if (fallback_is_sentinel) {
+      return fallback;
+    }
+  }
+  return covariance_from_variance(variance);
 }
 
 }  // namespace conversions
