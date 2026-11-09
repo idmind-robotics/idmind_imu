@@ -2,28 +2,32 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>idmind_imu</name>
-  <version>1.0.0</version>
+  <version>2.0.0</version>
   <description>IDMinds package to handle IMUs on robots</description>
   <maintainer email="cneves@idmind.pt">Carlos Neves</maintainer>
   <license>Apache-2.0</license>
 
-  <depend>rclpy</depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>diagnostic_msgs</depend>
   <depend>rcl_interfaces</depend>
-  <depend>tf_transformations</depend>
-  <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>python3-transforms3d</exec_depend>
+  <depend>diagnostic_updater</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
+  <!-- tinkerforge_c_bindings has no rosdep key; CMakeLists.txt FetchContent-fetches a pinned
+       release (version + SHA256) at configure time, or set -DTINKERFORGE_C_BINDINGS_DIR to
+       point at a local copy. -->
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

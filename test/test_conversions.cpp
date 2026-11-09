@@ -1,0 +1,383 @@
+// Copyright 2024 IDMind
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/// \file
+/// Unit tests for idmind_imu/conversions.hpp: pure math, no ROS, no hardware.
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+
+#include "idmind_imu/conversions.hpp"
+
+using idmind_imu::conversions::Calibration;
+using idmind_imu::conversions::CalibrationAxis;
+using idmind_imu::conversions::acceleration_from_brick;
+using idmind_imu::conversions::angular_velocity_from_brick;
+using idmind_imu::conversions::blended_covariance;
+using idmind_imu::conversions::decode_calibration;
+using idmind_imu::conversions::diagonal_covariance;
+using idmind_imu::conversions::euler_from_brick;
+using idmind_imu::conversions::kYawDriftFactor;
+using idmind_imu::conversions::magnetic_field_from_brick;
+using idmind_imu::conversions::orientation_covariance;
+using idmind_imu::conversions::quaternion_from_brick;
+using idmind_imu::conversions::scaled_covariance;
+
+namespace
+{
+/// Degrees to radians, so expectations read in the units the datasheet uses.
+double radians(double degrees) {return degrees * M_PI / 180.0;}
+}  // namespace
+
+TEST(Conversions, AccelerationFromBrickBasic)
+{
+  // 100 counts equals 1.0 m/s^2 on each axis; negatives and zero pass through linearly.
+  const auto result = acceleration_from_brick({100, -100, 0});
+  EXPECT_DOUBLE_EQ(result[0], 1.0);
+  EXPECT_DOUBLE_EQ(result[1], -1.0);
+  EXPECT_DOUBLE_EQ(result[2], 0.0);
+}
+
+TEST(Conversions, AccelerationFromBrickArbitrary)
+{
+  const auto result = acceleration_from_brick({250, -50, 10});
+  EXPECT_NEAR(result[0], 2.5, 1e-12);
+  EXPECT_NEAR(result[1], -0.5, 1e-12);
+  EXPECT_NEAR(result[2], 0.1, 1e-12);
+}
+
+TEST(Conversions, MagneticFieldFromBrick)
+{
+  // 16 counts equals 1 uT = 1e-6 T.
+  const auto result = magnetic_field_from_brick({16, -16, 0});
+  EXPECT_NEAR(result[0], 1e-6, 1e-18);
+  EXPECT_NEAR(result[1], -1e-6, 1e-18);
+  EXPECT_DOUBLE_EQ(result[2], 0.0);
+}
+
+TEST(Conversions, MagneticFieldFromBrickArbitrary)
+{
+  const auto result = magnetic_field_from_brick({32, 8, -8});
+  EXPECT_NEAR(result[0], 2e-6, 1e-18);
+  EXPECT_NEAR(result[1], 0.5e-6, 1e-18);
+  EXPECT_NEAR(result[2], -0.5e-6, 1e-18);
+}
+
+TEST(Conversions, AngularVelocityFromBrick)
+{
+  // 16 counts equals 1.0 deg/s = 0.0174533 rad/s.
+  const auto result = angular_velocity_from_brick({16, -16, 0});
+  EXPECT_NEAR(result[0], 0.0174533, 1e-6);
+  EXPECT_NEAR(result[1], -0.0174533, 1e-6);
+  EXPECT_DOUBLE_EQ(result[2], 0.0);
+}
+
+TEST(Conversions, AngularVelocityFromBrickMatchesRadians)
+{
+  const auto result = angular_velocity_from_brick({160, 0, -32});
+  EXPECT_NEAR(result[0], radians(10.0), 1e-12);
+  EXPECT_NEAR(result[1], 0.0, 1e-12);
+  EXPECT_NEAR(result[2], radians(-2.0), 1e-12);
+}
+
+TEST(Conversions, QuaternionFromBrickIdentity)
+{
+  // 16383 counts of w-only input maps to the ROS identity quaternion (0, 0, 0, 1).
+  const auto result = quaternion_from_brick({16383, 0, 0, 0});
+  EXPECT_DOUBLE_EQ(result[0], 0.0);
+  EXPECT_DOUBLE_EQ(result[1], 0.0);
+  EXPECT_DOUBLE_EQ(result[2], 0.0);
+  EXPECT_DOUBLE_EQ(result[3], 1.0);
+}
+
+TEST(Conversions, QuaternionFromBrickReordersComponents)
+{
+  // Four distinct values verify the (w,x,y,z)->(x,y,z,w) permutation component by component.
+  const auto result = quaternion_from_brick({1000, 2000, 3000, 4000});
+  EXPECT_NEAR(result[0], 2000 / 16383.0, 1e-12);
+  EXPECT_NEAR(result[1], 3000 / 16383.0, 1e-12);
+  EXPECT_NEAR(result[2], 4000 / 16383.0, 1e-12);
+  EXPECT_NEAR(result[3], 1000 / 16383.0, 1e-12);
+}
+
+TEST(Conversions, EulerFromBrickPutsHeadingInYawSlot)
+{
+  const auto result = euler_from_brick({16 * 90, 0, 0});
+  EXPECT_NEAR(result[0], 0.0, 1e-12);
+  EXPECT_NEAR(result[1], 0.0, 1e-12);
+  EXPECT_NEAR(result[2], radians(90.0), 1e-12);
+}
+
+TEST(Conversions, EulerFromBrickAllDistinct)
+{
+  // Distinct roll/pitch/heading counts each land in their correct output slot.
+  const auto result = euler_from_brick({16 * 30, 16 * 10, 16 * 20});
+  EXPECT_NEAR(result[0], radians(10.0), 1e-12);
+  EXPECT_NEAR(result[1], radians(20.0), 1e-12);
+  EXPECT_NEAR(result[2], radians(30.0), 1e-12);
+}
+
+TEST(Conversions, DecodeCalibrationZero)
+{
+  EXPECT_EQ(decode_calibration(0x00), (Calibration{0, 0, 0, 0}));
+}
+
+TEST(Conversions, DecodeCalibrationFull)
+{
+  EXPECT_EQ(decode_calibration(0xFF), (Calibration{3, 3, 3, 3}));
+}
+
+TEST(Conversions, DecodeCalibrationDistinctLevels)
+{
+  // 0b11'10'01'00 verifies field ORDER: sys=3, gyro=2, acc=1, mag=0.
+  EXPECT_EQ(decode_calibration(0b11100100), (Calibration{3, 2, 1, 0}));
+}
+
+TEST(Conversions, DiagonalCovarianceShapeAndOffDiagonals)
+{
+  const auto cov = diagonal_covariance(1.0, 2.0, 3.0);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0) << "off-diagonal element " << i << " must be exactly zero";
+  }
+  EXPECT_DOUBLE_EQ(cov[0], 1.0);
+  EXPECT_DOUBLE_EQ(cov[4], 2.0);
+  EXPECT_DOUBLE_EQ(cov[8], 3.0);
+}
+
+TEST(Conversions, OrientationCovarianceFusionOffIsInvalidMarker)
+{
+  // fusion_mode 0 must return the -1.0 sentinel meaning "no orientation estimate".
+  const auto cov = orientation_covariance(0, Calibration{3, 3, 3, 3}, 0.01);
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+  for (size_t i = 1; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceZeroStddevIsUnknownNotCertain)
+{
+  // An all-zero covariance means "perfectly certain" to a consumer, not "unknown". A stddev
+  // of 0 must therefore produce the -1 sentinel rather than falling through to 0 * 0 * factor.
+  const auto cov = orientation_covariance(2, Calibration{3, 3, 3, 3}, 0.0);
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+  for (size_t i = 1; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceNegativeStddevIsUnknown)
+{
+  const auto cov = orientation_covariance(2, Calibration{3, 3, 3, 3}, -1.0);
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+}
+
+TEST(Conversions, OrientationCovarianceNanStddevIsUnknown)
+{
+  // NaN would otherwise propagate into every diagonal term and poison downstream filters.
+  const auto cov =
+    orientation_covariance(2, Calibration{3, 3, 3, 3}, std::numeric_limits<double>::quiet_NaN());
+  EXPECT_DOUBLE_EQ(cov[0], -1.0);
+  for (size_t i = 1; i < cov.size(); ++i) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceIsNeverAllZero)
+{
+  // Sweep the whole input space the node can hand this function: no combination may yield a
+  // matrix that a consumer would read as "perfectly certain".
+  for (int fusion_mode : {0, 1, 2, 3}) {
+    for (uint8_t sys = 0; sys <= 3; ++sys) {
+      for (double stddev : {0.0, -1.0, 1e-9, 0.01, 1.0, 1e6}) {
+        const auto cov = orientation_covariance(fusion_mode, Calibration{sys, 0, 0, 0}, stddev);
+        const bool all_zero = std::all_of(
+          cov.begin(), cov.end(), [](double v) {return v == 0.0;});
+        EXPECT_FALSE(all_zero)
+          << "all-zero covariance for fusion_mode=" << fusion_mode
+          << " sys=" << static_cast<int>(sys) << " stddev=" << stddev;
+      }
+    }
+  }
+}
+
+TEST(Conversions, ScaledCovarianceUsesItsOwnCalibrationAxis)
+{
+  // Distinct levels per axis prove each sensor is keyed on its own calibration entry, not on
+  // the system level: (sys, gyro, acc, mag) = (3, 2, 1, 0) must give three different factors.
+  const Calibration calibration{3, 2, 1, 0};
+  const std::array<double, 3> stddev{1.0, 1.0, 1.0};
+
+  const auto gyro = scaled_covariance(stddev, calibration, CalibrationAxis::Gyroscope);
+  const auto acc = scaled_covariance(stddev, calibration, CalibrationAxis::Accelerometer);
+  const auto mag = scaled_covariance(stddev, calibration, CalibrationAxis::Magnetometer);
+
+  EXPECT_DOUBLE_EQ(gyro[0], 4.0);    // gyro level 2 -> factor 4
+  EXPECT_DOUBLE_EQ(acc[0], 25.0);    // acc  level 1 -> factor 25
+  EXPECT_DOUBLE_EQ(mag[0], 100.0);   // mag  level 0 -> factor 100
+}
+
+TEST(Conversions, ScaledCovarianceShrinksAsCalibrationImproves)
+{
+  const std::array<double, 3> stddev{0.01, 0.01, 0.01};
+  const auto worst = scaled_covariance(stddev, Calibration{0, 0, 0, 0}, CalibrationAxis::Gyroscope);
+  const auto best = scaled_covariance(stddev, Calibration{0, 3, 0, 0}, CalibrationAxis::Gyroscope);
+  EXPECT_LT(best[0], worst[0]);
+  EXPECT_DOUBLE_EQ(best[0], 0.01 * 0.01);
+}
+
+TEST(Conversions, ScaledCovarianceIsPerAxis)
+{
+  // A different stddev per axis must land on its own diagonal slot, off-diagonals still zero.
+  const auto cov = scaled_covariance(
+    {1.0, 2.0, 3.0}, Calibration{3, 3, 3, 3}, CalibrationAxis::Accelerometer);
+  EXPECT_DOUBLE_EQ(cov[0], 1.0);
+  EXPECT_DOUBLE_EQ(cov[4], 4.0);
+  EXPECT_DOUBLE_EQ(cov[8], 9.0);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, ScaledCovarianceNoCalibrationIsWorstCase)
+{
+  const auto none = scaled_covariance({1.0, 1.0, 1.0}, std::nullopt, CalibrationAxis::Gyroscope);
+  EXPECT_DOUBLE_EQ(none[0], 100.0);
+}
+
+TEST(Conversions, ScaledCovarianceIsNeverAllZero)
+{
+  // Same guarantee as orientation_covariance: no reachable input may produce a matrix that a
+  // consumer would read as "perfectly certain".
+  const auto axes = {
+    CalibrationAxis::Gyroscope, CalibrationAxis::Accelerometer, CalibrationAxis::Magnetometer};
+  for (auto axis : axes) {
+    for (uint8_t level = 0; level <= 3; ++level) {
+      for (double s : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN(), 1e-9, 1.0}) {
+        const Calibration calibration{level, level, level, level};
+        const auto cov = scaled_covariance({s, s, s}, calibration, axis);
+        const bool all_zero = std::all_of(
+          cov.begin(), cov.end(), [](double v) {return v == 0.0;});
+        EXPECT_FALSE(all_zero) << "all-zero covariance for stddev=" << s;
+      }
+    }
+  }
+}
+
+TEST(Conversions, OrientationCovarianceOffDiagonalsAreZero)
+{
+  const auto cov = orientation_covariance(1, Calibration{3, 3, 3, 3}, 0.01);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, OrientationCovarianceBetterCalibrationIsSmallerVariance)
+{
+  const auto best = orientation_covariance(1, Calibration{3, 0, 0, 0}, 0.01);
+  const auto worst = orientation_covariance(1, Calibration{0, 0, 0, 0}, 0.01);
+  EXPECT_LT(best[0], worst[0]);
+  EXPECT_LT(best[8], worst[8]);
+}
+
+TEST(Conversions, OrientationCovarianceFusionMode2InflatesYawOnly)
+{
+  const Calibration calibration{3, 3, 3, 3};
+  const auto mode1 = orientation_covariance(1, calibration, 0.01);
+  const auto mode2 = orientation_covariance(2, calibration, 0.01);
+  EXPECT_DOUBLE_EQ(mode1[0], mode2[0]);
+  EXPECT_DOUBLE_EQ(mode1[4], mode2[4]);
+  EXPECT_NEAR(mode2[8], mode1[8] * kYawDriftFactor, 1e-18);
+  EXPECT_GT(mode2[8], mode1[8]);
+}
+
+TEST(Conversions, OrientationCovarianceNoCalibrationIsWorstCase)
+{
+  const auto none = orientation_covariance(1, std::nullopt, 0.01);
+  const auto worst = orientation_covariance(1, Calibration{0, 0, 0, 0}, 0.01);
+  EXPECT_DOUBLE_EQ(none[0], worst[0]);
+  EXPECT_DOUBLE_EQ(none[8], worst[8]);
+}
+
+TEST(Conversions, BlendedCovarianceWithoutMeasurementIsTheFallback)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  EXPECT_EQ(blended_covariance(std::nullopt, fallback, floor), fallback);
+}
+
+TEST(Conversions, BlendedCovarianceMeasuredCanOnlyRaiseAboveTheFloor)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  ASSERT_DOUBLE_EQ(floor[0], 0.01);
+  // Below the floor on x, equal on y, above on z
+  const auto cov = blended_covariance(std::array<double, 3>{1e-9, 0.01, 0.5}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], 0.01);
+  EXPECT_DOUBLE_EQ(cov[4], 0.01);
+  EXPECT_DOUBLE_EQ(cov[8], 0.5);
+  for (int i : {1, 2, 3, 5, 6, 7}) {
+    EXPECT_DOUBLE_EQ(cov[i], 0.0);
+  }
+}
+
+TEST(Conversions, BlendedCovarianceSilentAxisTakesTheFallbackPerAxis)
+{
+  const auto fallback = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{0, 0, 0, 0},
+    CalibrationAxis::Gyroscope);
+  const auto floor = scaled_covariance(
+    {0.1, 0.1, 0.1}, Calibration{3, 3, 3, 3},
+    CalibrationAxis::Gyroscope);
+  const auto cov = blended_covariance(std::array<double, 3>{0.0, 0.5, 0.0}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], fallback[0]);
+  EXPECT_DOUBLE_EQ(cov[4], 0.5);
+  EXPECT_DOUBLE_EQ(cov[8], fallback[8]);
+}
+
+TEST(Conversions, BlendedCovarianceFloorIncludesTheYawDriftInFusionMode2)
+{
+  const auto fallback = orientation_covariance(2, Calibration{0, 0, 0, 0}, 0.01);
+  const auto floor = orientation_covariance(2, Calibration{3, 3, 3, 3}, 0.01);
+  const auto cov = blended_covariance(std::array<double, 3>{1e-9, 1e-9, 1e-9}, fallback, floor);
+  EXPECT_DOUBLE_EQ(cov[0], 1e-4);
+  EXPECT_NEAR(cov[8], 1e-4 * kYawDriftFactor, 1e-18);
+}
+
+TEST(Conversions, BlendedCovarianceKeepsTheSentinelBehaviour)
+{
+  const auto sentinel = orientation_covariance(0, Calibration{3, 3, 3, 3}, 0.01);
+  ASSERT_EQ(sentinel[0], -1.0);
+  // A silent axis with a sentinel fallback has nothing to borrow
+  EXPECT_EQ(
+    blended_covariance(std::array<double, 3>{0.0, 1e-4, 1e-4}, sentinel, sentinel), sentinel);
+  // A fully positive measurement stands, as before
+  const auto cov = blended_covariance(std::array<double, 3>{1e-4, 2e-4, 3e-4}, sentinel, sentinel);
+  EXPECT_DOUBLE_EQ(cov[0], 1e-4);
+  EXPECT_DOUBLE_EQ(cov[4], 2e-4);
+  EXPECT_DOUBLE_EQ(cov[8], 3e-4);
+  // Sentinel without a measurement stays the sentinel
+  EXPECT_EQ(blended_covariance(std::nullopt, sentinel, sentinel), sentinel);
+}
