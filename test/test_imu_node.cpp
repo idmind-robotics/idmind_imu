@@ -926,7 +926,7 @@ TEST_F(ImuNodeTest, ReadyOnlyOnceDataIsFlowing)
   auto before = call_ready(harness);
   ASSERT_TRUE(before) << "ready service did not answer";
   EXPECT_FALSE(before->success) << "ready with no data: " << before->message;
-  EXPECT_NE(before->message.find("not ready"), std::string::npos);
+  EXPECT_NE(before->message.find("is not ready: "), std::string::npos) << before->message;
 
   Streamer streamer(fake_, healthy_frame());
   std::string message;
@@ -938,7 +938,7 @@ TEST_F(ImuNodeTest, ReadyOnlyOnceDataIsFlowing)
         return response && response->success;
       },
       kHealthDeadline)) << "never ready while streaming: " << message;
-  EXPECT_NE(message.find("is ready (RUNNING)"), std::string::npos) << message;
+  EXPECT_EQ(message, "idmind_imu is ready") << message;
 }
 
 TEST_F(ImuNodeTest, NoDataRaisesAndClears)

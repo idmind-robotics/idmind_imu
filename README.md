@@ -142,7 +142,7 @@ as `robot_localization` generally expect gravity to be *included*; use `raw` for
 
 | Name | Type | Description |
 |---|---|---|
-| `~/ready` | `std_srvs/Trigger` | `success` only when the state is `RUNNING` and data is fresh. `message` carries the state and, if not ready, the most severe active code, e.g. `idmind_imu is not ready (NO_DEVICE): IMU_DEVICE_MISSING` |
+| `~/ready` | `std_srvs/Trigger` | `success` only when the state is `RUNNING` and data is fresh. `message` is `<node> is ready` or `<node> is not ready: <reason>` (ADR 0044): the state and its most severe active code (`DISCONNECTED (IMU_CONNECT_FAILED)`, `NO_DEVICE (IMU_DEVICE_MISSING)`, `RECOVERING (...)`), else `no fresh IMU data` (no sample for `timeout` s), else `watchdog exception: <what>` (cleared by the next good watchdog tick) |
 | `~/standby` | `std_srvs/SetBool` | `data: true` suspends all data-topic publishing; `data: false` resumes it. Samples keep arriving from the driver while suspended, so the watchdog, diagnostics and the noise estimate stay live (the `standby` key in the "Data flow" diagnostic reflects the current state). |
 
 ### Covariances

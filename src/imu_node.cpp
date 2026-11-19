@@ -480,19 +480,34 @@ void ImuNode::report_ready(
   (void)request;
   NodeState state;
   bool fresh = false;
+  std::string watchdog_error;
   std::vector<health::Condition> active;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     state = node_state_;
     fresh = data_fresh_;
+    watchdog_error = watchdog_error_;
     active = tracker_.active();
   }
-  response->success = state == NodeState::RUNNING && fresh;
-  response->message = std::string(this->get_name()) +
-    (response->success ? " is ready" : " is not ready") + " (" + node_state_name(state) + ")";
-  if (!response->success && !active.empty()) {
-    response->message += ": " + active.front().code;
+  response->success = state == NodeState::RUNNING && fresh && watchdog_error.empty();
+  response->message = std::string(this->get_name());
+  if (response->success) {
+    response->message += " is ready";
+    return;
   }
+  // First failing condition: the state, else stale data, else the last watchdog exception.
+  std::string reason;
+  if (state != NodeState::RUNNING) {
+    reason = node_state_name(state);
+    if (!active.empty()) {
+      reason += " (" + active.front().code + ")";
+    }
+  } else if (!fresh) {
+    reason = "no fresh IMU data";
+  } else {
+    reason = "watchdog exception: " + watchdog_error;
+  }
+  response->message += " is not ready: " + reason;
 }
 
 void ImuNode::set_standby(
@@ -894,6 +909,7 @@ void ImuNode::watchdog()
       last_watchdog_ = now;
       ++watchdog_tick_count_;
       action = evaluate_health_locked(state, now);
+      watchdog_error_.clear();
     }
     // Non-blocking: the driver runs the mechanics on its own worker thread.
     if (action.has_value()) {
@@ -905,12 +921,20 @@ void ImuNode::watchdog()
   } catch (const std::exception & exc) {
     // CRITICAL: log and continue. Never shut down or cancel the timer from here - a single
     // transient exception must not leave the node permanently inert.
+    set_watchdog_error(exc.what());
     RCLCPP_ERROR_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000, "Exception in watchdog: %s", exc.what());
   } catch (...) {
+    set_watchdog_error("unknown exception");
     RCLCPP_ERROR_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000, "Unknown exception in watchdog");
   }
+}
+
+void ImuNode::set_watchdog_error(const std::string & what)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  watchdog_error_ = what.empty() ? "error" : what;
 }
 
 double ImuNode::rate_locked(double now) const

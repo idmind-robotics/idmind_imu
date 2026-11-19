@@ -224,6 +224,8 @@ private:
 
   /// Record a tick and check data staleness. Never performs hardware I/O.
   void watchdog();
+  /// Keep what the watchdog threw as the not-ready reason until the next good tick.
+  void set_watchdog_error(const std::string & what);
 
   /// Recreate the watchdog timer at \p control_freq (rclcpp has no timer period setter).
   void restart_watchdog_timer(double control_freq);
@@ -303,6 +305,8 @@ private:
 
   /// Whether the last sample is younger than ``timeout``, as of the last watchdog tick.
   bool data_fresh_{false};
+  /// What the last watchdog tick threw; empty after a tick that succeeded. Guarded by mutex_.
+  std::string watchdog_error_;
 
   /// When true, ``on_sample`` still runs all its bookkeeping but publishes nothing. Written by
   /// the ``standby`` service on an executor thread, read by ``on_sample`` on a driver thread.
