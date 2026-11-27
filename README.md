@@ -247,7 +247,7 @@ off by doubling from `recovery_backoff_initial`, and one only counts as successf
 no latch and nothing to clear by hand: the IMU drives nothing, so retrying is always safe.
 
 **Calibration** ignores `sys` and `mag` in fusion modes `0` and `2`, which do not use the
-magnetometer. There they may never rise (on the Shield, `mag` stays 0 in mode `2`), and
+magnetometer. There they may never rise (on one robot, `mag` stays 0 in mode `2`), and
 counting them reported `WARN` forever.
 
 **Frozen data on a still robot.** On a perfectly still robot, the gyro can repeat one value
@@ -256,7 +256,7 @@ on one value. Only raw accelerometer noise (about 1 LSB = 1 cm/s² RMS, from the
 keeps the frame changing, which is why `IMU_DATA_FROZEN` requires *every* field to repeat,
 and for 5 s (about 100 samples at 20 Hz).
 
-Measured on a parked Shield in mode `2`, 10 minutes, 12,001 frames at 20 Hz:
+Measured on a parked robot in mode `2`, 10 minutes, 12,001 frames at 20 Hz:
 
 | Field | Longest identical run |
 |---|---|

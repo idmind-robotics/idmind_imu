@@ -879,7 +879,7 @@ TEST_F(ImuNodeTest, StandbyServiceSuspendsAndResumesPublishing)
 TEST_F(ImuNodeTest, NoMagneticFieldIsPublishedWhileTheMagnetometerIsSuspended)
 {
   // Fusion mode 2 suspends the BNO-055 magnetometer, which then reads exactly zero. Measured
-  // on a Shield: (0, 0, 0) T for 10 minutes straight, published with a confident covariance.
+  // on a robot: (0, 0, 0) T for 10 minutes straight, published with a confident covariance.
   Harness harness(fake_);  // default imu_fusion_mode 2
   auto imu_messages = harness.subscribe<sensor_msgs::msg::Imu>("imu");
   auto fields = harness.subscribe<sensor_msgs::msg::MagneticField>("magnetic_field");
